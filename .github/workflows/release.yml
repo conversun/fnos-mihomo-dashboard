@@ -3,11 +3,6 @@ name: Release
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to release (e.g. v0.1.0)'
-        required: true
 
 permissions:
   contents: write
@@ -17,19 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-
-      - name: Resolve tag
-        id: tag
-        run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            echo "TAG=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Build linux/amd64 + linux/arm64
         run: |
@@ -46,29 +31,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ steps.tag.outputs.TAG }}"
+          TAG="${GITHUB_REF#refs/tags/}"
           gh release create "$TAG" \
             --title "fnos-mihomo-dashboard $TAG" \
-            --notes "Lightweight management dashboard for mihomo as a fnOS third-party app.
-
-## Binaries
-
-| Platform | File |
-|---|---|
-| linux/amd64 | \`fnos-mihomo-dashboard-linux-amd64\` |
-| linux/arm64 | \`fnos-mihomo-dashboard-linux-arm64\` |
-
-Each binary ships its embedded UI; no external dependencies.
-
-## Usage
-
-\`\`\`
-fnos-mihomo-dashboard \\
-  -listen :9097 \\
-  -mihomo-api http://127.0.0.1:9090 \\
-  -config /etc/mihomo/config.yaml \\
-  -log /var/log/mihomo.log \\
-  -metacubexd /opt/metacubexd
-\`\`\`" \
-            dist/* || \
-          gh release upload "$TAG" dist/* --clobber
+            --notes "Lightweight management dashboard for mihomo as a fnOS third-party app." \
+            dist/*
