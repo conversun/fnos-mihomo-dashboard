@@ -1,0 +1,7 @@
+fnos-mihomo-dashboard
+fnos-mihomo-dashboard-*
+dist/
+*.test
+vendor/
+.idea/
+.vscode/
