@@ -150,15 +150,6 @@ window.tailwind.config = {
       </div>
     </div>
     <div class="flex items-center gap-2">
-      <!-- mihomo on/off toggle -->
-      <button @click="toggleMihomo" :disabled="toggling"
-              :title="status.mihomo_running ? '点击停止 mihomo (dashboard 仍可访问)' : '点击启动 mihomo'"
-              class="inline-flex items-center gap-2 rounded-md border px-3 h-9 text-sm font-medium transition-colors disabled:opacity-50"
-              :class="status.mihomo_running ? 'border-success/30 bg-success/10 text-success hover:bg-success/15' : 'border-border bg-card text-muted-foreground hover:text-foreground'">
-        <span class="inline-block size-2 rounded-full"
-              :class="status.mihomo_running ? 'bg-success' : 'bg-muted-foreground'"></span>
-        <span x-text="toggling ? '处理中…' : (status.mihomo_running ? 'mihomo 运行中' : 'mihomo 已停止')"></span>
-      </button>
       <!-- Theme switcher: icon-based segmented control -->
       <div class="inline-flex items-center rounded-md border border-border bg-card p-0.5 text-muted-foreground" role="group" aria-label="主题切换">
         <button @click="setTheme('light')"
@@ -184,6 +175,45 @@ window.tailwind.config = {
     </div>
   </header>
 
+  <!-- ============ Mihomo master control (hero) ============ -->
+  <section class="rounded-lg border mb-6 overflow-hidden transition-colors"
+           :class="status.mihomo_running ? 'border-success/30 bg-success/5' : 'border-border bg-card'">
+    <div class="p-5 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-4 min-w-0">
+        <div class="relative flex items-center justify-center size-12 rounded-full shrink-0"
+             :class="status.mihomo_running ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'">
+          <svg class="size-6"><use href="#i-shield"/></svg>
+          <span x-show="status.mihomo_running"
+                class="absolute -bottom-0.5 -right-0.5 size-3 rounded-full bg-success border-2 border-card pulse-dot"></span>
+        </div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <h2 class="text-xl font-semibold leading-none tracking-tight">mihomo 代理服务</h2>
+            <span x-show="status.mihomo_running" class="inline-flex items-center text-xs font-medium text-success bg-success/10 px-2 py-0.5 rounded-full">● 运行中</span>
+            <span x-show="!status.mihomo_running && status.mihomo_pid !== undefined" class="inline-flex items-center text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">○ 已停止</span>
+            <span x-show="status.mihomo_pid === undefined" class="inline-flex items-center text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">连接中…</span>
+          </div>
+          <p class="text-sm text-muted-foreground mt-1.5 truncate">
+            <span x-show="status.version?.version" x-text="'内核 v' + (status.version?.version || '')"></span>
+            <span x-show="status.mihomo_running && status.mihomo_pid"> · PID <span class="mono" x-text="status.mihomo_pid"></span></span>
+            <span> · 管理端口 9097 · 代理端口 7890</span>
+          </p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 shrink-0">
+        <span class="text-sm text-muted-foreground" x-text="toggling ? '处理中…' : (status.mihomo_running ? '关闭' : '启动')"></span>
+        <button @click="toggleMihomo" :disabled="toggling || status.mihomo_pid === undefined"
+                role="switch"
+                :aria-checked="status.mihomo_running ? 'true' : 'false'"
+                :class="status.mihomo_running ? 'bg-success' : 'bg-input'"
+                class="relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50">
+          <span class="pointer-events-none inline-block size-7 rounded-full bg-background shadow-lg ring-0 transition-transform"
+                :class="status.mihomo_running ? 'translate-x-6' : 'translate-x-0'"></span>
+        </button>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ Status grid ============ -->
   <section class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
     <div class="bg-card text-card-foreground rounded-lg border border-border p-4">
@@ -197,14 +227,10 @@ window.tailwind.config = {
     <div class="bg-card text-card-foreground rounded-lg border border-border p-4">
       <div class="flex items-center gap-2 text-muted-foreground mb-2">
         <svg class="size-4"><use href="#i-activity"/></svg>
-        <span class="text-xs font-medium uppercase tracking-wide">连接状态</span>
+        <span class="text-xs font-medium uppercase tracking-wide">监听端口</span>
       </div>
-      <div class="flex items-center gap-2">
-        <span class="inline-block size-2 rounded-full"
-              :class="status.mihomo_running ? 'bg-success pulse-dot' : 'bg-destructive'"></span>
-        <span class="text-xl font-semibold" x-text="status.mihomo_running ? '运行中' : (status.version === undefined ? '连接中' : '已停止')"></span>
-      </div>
-      <div class="text-xs text-muted-foreground mt-1">监听 :9097 · 代理 :7890</div>
+      <div class="text-xl font-semibold">7890 <span class="text-sm font-normal text-muted-foreground">/ 9097</span></div>
+      <div class="text-xs text-muted-foreground mt-1">HTTP+SOCKS5 · Dashboard</div>
     </div>
     <div class="bg-card text-card-foreground rounded-lg border border-border p-4">
       <div class="flex items-center gap-2 text-muted-foreground mb-2">
