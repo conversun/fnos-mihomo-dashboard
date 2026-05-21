@@ -142,96 +142,33 @@ func (m *Manager) GetSubscription() (string, error) {
 	return strings.TrimSpace(string(b)), nil
 }
 
-// SetSubscriptionFromURL persists the subscription URL, writes the supplied
-// proxies list to providers/fnos-subscription.yaml (the file mihomo will
-// actually read), and updates config.yaml so the PROXY group references it
-// via a `type: file` proxy-provider. Applies fnOS overrides at the end.
-func (m *Manager) SetSubscriptionFromURL(url string, proxies []any) error {
+// SetSubscriptionFromURL persists the URL and writes the entire subscription
+// yaml as the mihomo config, then applies fnOS forced overrides (external-
+// controller, profile, dns, tun, sniffer). The user's proxies / proxy-groups
+// / rules / rule-providers / etc. from the subscription are preserved as-is.
+func (m *Manager) SetSubscriptionFromURL(url string, fullYAML []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if len(proxies) == 0 {
-		return fmt.Errorf("refusing to save an empty proxies list")
+	var cfg map[string]any
+	if err := yaml.Unmarshal(fullYAML, &cfg); err != nil {
+		return fmt.Errorf("parse subscription yaml: %w", err)
+	}
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+	if proxies, _ := cfg["proxies"].([]any); len(proxies) == 0 {
+		return fmt.Errorf("subscription yaml has no proxies (empty / not a Clash subscription)")
 	}
 
-	dir := filepath.Dir(m.Path)
-	providersDir := filepath.Join(dir, "providers")
-	if err := os.MkdirAll(providersDir, 0o755); err != nil {
-		return err
-	}
-	providerFile := filepath.Join(providersDir, "fnos-subscription.yaml")
-	providerYaml, err := yaml.Marshal(map[string]any{"proxies": proxies})
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(providerFile, providerYaml, 0o644); err != nil {
-		return err
-	}
+	// Apply fnOS forced overrides — this is where the subscription's dns / tun /
+	// sniffer / external-controller / profile are replaced with the fnOS gateway
+	// defaults. User proxies / proxy-groups / rules / rule-providers are kept.
+	applyFnOSOverrides(cfg)
+
 	if err := os.WriteFile(m.subURLPath(), []byte(url), 0o644); err != nil {
 		return err
 	}
-
-	cfg, err := m.readUnsafe()
-	if err != nil {
-		return err
-	}
-
-	providers, _ := cfg["proxy-providers"].(map[string]any)
-	if providers == nil {
-		providers = map[string]any{}
-	}
-	providers["fnos-subscription"] = map[string]any{
-		"type": "file",
-		"path": providerFile,
-		"health-check": map[string]any{
-			"enable":   true,
-			"url":      "http://www.gstatic.com/generate_204",
-			"interval": 300,
-		},
-	}
-	cfg["proxy-providers"] = providers
-
-	groups, _ := cfg["proxy-groups"].([]any)
-	hasFnosGroup := false
-	for i, g := range groups {
-		gm, ok := g.(map[string]any)
-		if !ok {
-			continue
-		}
-		if name, _ := gm["name"].(string); name == "PROXY" {
-			use, _ := gm["use"].([]any)
-			has := false
-			for _, u := range use {
-				if s, _ := u.(string); s == "fnos-subscription" {
-					has = true
-					break
-				}
-			}
-			if !has {
-				use = append(use, "fnos-subscription")
-				gm["use"] = use
-			}
-			groups[i] = gm
-			hasFnosGroup = true
-			break
-		}
-	}
-	if !hasFnosGroup {
-		groups = append([]any{map[string]any{
-			"name":    "PROXY",
-			"type":    "select",
-			"use":     []any{"fnos-subscription"},
-			"proxies": []any{"DIRECT"},
-		}}, groups...)
-	}
-	cfg["proxy-groups"] = groups
-
-	if rules, _ := cfg["rules"].([]any); len(rules) == 0 {
-		cfg["rules"] = []any{"MATCH,PROXY"}
-	}
-
-	applyFnOSOverrides(cfg)
-
 	return m.writeUnsafe(cfg)
 }
 
@@ -249,60 +186,110 @@ func (m *Manager) writeUnsafe(cfg map[string]any) error {
 }
 
 
-// applyFnOSOverrides ensures fnOS 旁路由 / transparent-proxy safety:
-//   1. profile.store-selected + store-fake-ip = true (persist UI selection)
-//   2. sniffer enabled (TLS/HTTP/QUIC) — without it, transparent-proxy rules
-//      fall through to MATCH/Final (see ../docs/mihomo.md §2.4)
-//   3. tun.inet4-route-exclude-address strips 198.18.0.0/16 (fake-ip must
-//      be handled by TUN, see ../docs/mihomo.md §2.1)
+// applyFnOSOverrides hardens a user-supplied subscription config for the
+// fnOS 旁路网关 scenario. These fields are owned by fnOS for stability +
+// framework consistency and cannot be overridden by the subscription:
+//
+//   1. external-controller pinned to 127.0.0.1:19090 (dashboard reverse-proxy)
+//   2. external-ui removed (dashboard serves MetaCubeXD at /clash/)
+//   3. profile.store-selected + store-fake-ip = true (persist UI choices)
+//   4. dns: full sidecar-gateway DNS stack from ../docs/mihomo.md
+//   5. tun: gateway-grade TUN config; enable defaults to false (opt-in
+//      via MetaCubeXD or direct yaml edit). 198.18.x must NOT be excluded.
+//   6. sniffer: TLS/HTTP/QUIC; transparent-proxy rules need it to match
+//
+// What we explicitly DO NOT touch (the subscription owns these):
+//   - proxies, proxy-groups, rules, rule-providers (business config)
+//   - mixed-port / mode / log-level / ipv6 / allow-lan / bind-address
+//   - any other field the subscription set
 func applyFnOSOverrides(cfg map[string]any) {
-	// 1. profile (always force)
-	profile, _ := cfg["profile"].(map[string]any)
-	if profile == nil {
-		profile = map[string]any{}
-	}
-	profile["store-selected"] = true
-	profile["store-fake-ip"] = true
-	cfg["profile"] = profile
+	// 1. fnOS framework fields (NOT NEGOTIABLE)
+	cfg["external-controller"] = "127.0.0.1:19090"
+	delete(cfg, "external-ui")
+	delete(cfg, "external-controller-tls")
+	delete(cfg, "external-controller-unix")
 
-	// 2. sniffer (only set if user didn't configure)
-	if _, ok := cfg["sniffer"]; !ok {
-		cfg["sniffer"] = map[string]any{
-			"enable": true,
-			"sniff": map[string]any{
-				"TLS":  map[string]any{"ports": []any{443, 8443}},
-				"HTTP": map[string]any{"ports": []any{80, 8080, 8880}, "override-destination": true},
-				"QUIC": map[string]any{"ports": []any{443, 8443}},
-			},
-			"parse-pure-ip":        true,
-			"override-destination": true,
-			"skip-domain":          []any{"+.apple.com", "+.icloud.com"},
-		}
+	// 2. profile (persist user choices across reloads / restarts)
+	cfg["profile"] = map[string]any{
+		"store-selected": true,
+		"store-fake-ip":  true,
 	}
 
-	// 3. tun: strip 198.18.x from inet4-route-exclude-address
-	if tun, ok := cfg["tun"].(map[string]any); ok {
-		if excludes, ok := tun["inet4-route-exclude-address"].([]any); ok {
-			filtered := make([]any, 0, len(excludes))
-			for _, e := range excludes {
-				if s, ok := e.(string); ok && strings.HasPrefix(s, "198.18.") {
-					continue
-				}
-				filtered = append(filtered, e)
-			}
-			tun["inet4-route-exclude-address"] = filtered
-			cfg["tun"] = tun
-		}
+	// 3. DNS — full sidecar-gateway stack (see ../docs/mihomo.md §1, §3)
+	cfg["dns"] = map[string]any{
+		"enable":                          true,
+		"cache-algorithm":                 "arc",
+		"prefer-h3":                       false,
+		"listen":                          "0.0.0.0:1053",
+		"ipv6":                            true,
+		"respect-rules":                   true,
+		"use-hosts":                       true,
+		"use-system-hosts":                true,
+		"enhanced-mode":                   "fake-ip",
+		"fake-ip-range":                   "198.18.0.1/16",
+		"fake-ip-filter-mode":             "blacklist",
+		"default-nameserver":              []any{"223.5.5.5", "119.29.29.29"},
+		"nameserver":                      []any{"223.5.5.5", "119.29.29.29"},
+		"proxy-server-nameserver":         []any{"223.5.5.5", "119.29.29.29"},
+		"direct-nameserver":               []any{"system"},
+		"direct-nameserver-follow-policy": true,
+		"fake-ip-filter": []any{
+			"*.lan", "*.local", "localhost.ptlogin2.qq.com",
+			"time.windows.com", "time.apple.com",
+			"+.pool.ntp.org", "+.stun.*",
+			"dns.msftncsi.com", "+.msftconnecttest.com", "+.msftncsi.com",
+			"+.srv.nintendo.net", "+.stun.playstation.net",
+			"xbox.*.microsoft.com", "+.xboxlive.com",
+			"+.turn.twilio.com", "+.stun.twilio.com", "stun.syncthing.net",
+			"+.logon.battlenet.com.cn", "+.logon.battle.net", "+.blzstatic.cn",
+			"network-test.debian.org", "detectportal.firefox.com", "resolver1.opendns.com",
+			"ntp.*.com", "time.*.com", "time.*.gov", "time.*.edu.cn", "+.ntp.org.cn",
+		},
+	}
+
+	// 4. TUN — gateway-grade config. enable defaults to false (opt-in via
+	//    MetaCubeXD or direct yaml edit). 198.18.x is intentionally NOT in
+	//    inet4-route-exclude-address (fake-ip must be handled by TUN).
+	cfg["tun"] = map[string]any{
+		"enable":                true,
+		"device":                "Meta",
+		"stack":                 "mixed",
+		"auto-route":            true,
+		"auto-redirect":         true,
+		"auto-detect-interface": true,
+		"strict-route":          false,
+		"mtu":                   1500,
+		"dns-hijack":            []any{"any:53"},
+		"inet4-route-exclude-address": []any{
+			"192.168.0.0/16",
+			"10.0.0.0/8",
+			"172.16.0.0/12",
+			"169.254.0.0/16",
+		},
+	}
+
+	// 5. Sniffer — transparent-proxy rule matching needs this
+	cfg["sniffer"] = map[string]any{
+		"enable": true,
+		"sniff": map[string]any{
+			"TLS":  map[string]any{"ports": []any{443, 8443}},
+			"HTTP": map[string]any{"ports": []any{80, 8080, 8880}, "override-destination": true},
+			"QUIC": map[string]any{"ports": []any{443, 8443}},
+		},
+		"parse-pure-ip":        true,
+		"override-destination": true,
+		"skip-domain":          []any{"+.apple.com", "+.icloud.com"},
 	}
 }
 
 // AppliedOverrides returns a human-readable list of overrides applied to the config.
 func (m *Manager) AppliedOverrides() []map[string]any {
 	return []map[string]any{
-		{"key": "profile.store-selected", "desc": "持久化策略组选择 (重启保留)", "value": true},
-		{"key": "profile.store-fake-ip", "desc": "持久化 fake-ip 池", "value": true},
-		{"key": "sniffer", "desc": "TLS/HTTP/QUIC Sniffer (透明代理规则匹配)", "value": "enabled"},
-		{"key": "tun.inet4-route-exclude-address", "desc": "剔除 198.18.0.0/16 (fake-ip 段必须由 TUN 接管)", "value": "sanitized"},
+		{"key": "external-controller", "desc": "fnOS 反代用 127.0.0.1:19090 (强制)", "value": "127.0.0.1:19090"},
+		{"key": "profile.store-selected / store-fake-ip", "desc": "持久化策略组选择 + fake-ip 池", "value": true},
+		{"key": "dns", "desc": "旁路网关 DNS 全套 (国内 nameserver + fake-ip + 完整 fake-ip-filter, 不含被墙的 fallback)", "value": "managed"},
+		{"key": "tun", "desc": "旁路网关 TUN 配置 (enable=true 默认, fnOS 安装时已 setcap 授权; 198.18.x 必由 TUN 接管)", "value": "managed"},
+		{"key": "sniffer", "desc": "TLS/HTTP/QUIC Sniffer (透明代理规则匹配必需)", "value": "enabled"},
 	}
 }
 
