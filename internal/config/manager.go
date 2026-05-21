@@ -255,7 +255,7 @@ func applyFnOSOverrides(cfg map[string]any) {
 		"device":                "Meta",
 		"stack":                 "mixed",
 		"auto-route":            true,
-		"auto-redirect":         true,
+		"auto-redirect":         false,
 		"auto-detect-interface": true,
 		"strict-route":          false,
 		"mtu":                   1500,
