@@ -150,6 +150,15 @@ window.tailwind.config = {
       </div>
     </div>
     <div class="flex items-center gap-2">
+      <!-- mihomo on/off toggle -->
+      <button @click="toggleMihomo" :disabled="toggling"
+              :title="status.mihomo_running ? '点击停止 mihomo (dashboard 仍可访问)' : '点击启动 mihomo'"
+              class="inline-flex items-center gap-2 rounded-md border px-3 h-9 text-sm font-medium transition-colors disabled:opacity-50"
+              :class="status.mihomo_running ? 'border-success/30 bg-success/10 text-success hover:bg-success/15' : 'border-border bg-card text-muted-foreground hover:text-foreground'">
+        <span class="inline-block size-2 rounded-full"
+              :class="status.mihomo_running ? 'bg-success' : 'bg-muted-foreground'"></span>
+        <span x-text="toggling ? '处理中…' : (status.mihomo_running ? 'mihomo 运行中' : 'mihomo 已停止')"></span>
+      </button>
       <!-- Theme switcher: icon-based segmented control -->
       <div class="inline-flex items-center rounded-md border border-border bg-card p-0.5 text-muted-foreground" role="group" aria-label="主题切换">
         <button @click="setTheme('light')"
@@ -168,7 +177,7 @@ window.tailwind.config = {
           <svg class="size-4"><use href="#i-moon"/></svg>
         </button>
       </div>
-      <a href="/clash/" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 h-9 text-sm font-medium hover:opacity-90 transition-opacity">
+      <a href="/clash/" target="_blank" rel="noopener" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 h-9 text-sm font-medium hover:opacity-90 transition-opacity">
         <span>高级管理</span>
         <svg class="size-4"><use href="#i-arrow-right"/></svg>
       </a>
@@ -192,8 +201,8 @@ window.tailwind.config = {
       </div>
       <div class="flex items-center gap-2">
         <span class="inline-block size-2 rounded-full"
-              :class="status.version ? 'bg-success pulse-dot' : 'bg-destructive'"></span>
-        <span class="text-xl font-semibold" x-text="status.version ? '运行中' : '离线'"></span>
+              :class="status.mihomo_running ? 'bg-success pulse-dot' : 'bg-destructive'"></span>
+        <span class="text-xl font-semibold" x-text="status.mihomo_running ? '运行中' : (status.version === undefined ? '连接中' : '已停止')"></span>
       </div>
       <div class="text-xs text-muted-foreground mt-1">监听 :9097 · 代理 :7890</div>
     </div>
@@ -358,6 +367,7 @@ function app() {
     copied: false,
     subInfo: { present: false, info: null },
     refreshing: false,
+    toggling: false,
     saving: false,
     message: '',
     messageOK: true,
@@ -369,8 +379,11 @@ function app() {
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if (this.theme === 'auto') this.applyTheme();
       });
-      await this.loadAll();
-      setInterval(() => this.loadAll(), 5000);
+      await this.loadOnce();
+      await this.fastPoll();
+      await this.slowPoll();
+      setInterval(() => this.fastPoll(), 5000);
+      setInterval(() => this.slowPoll(), 60000);
     },
 
     setTheme(t) {
@@ -384,23 +397,45 @@ function app() {
       document.documentElement.classList.toggle('dark', dark);
     },
 
-    async loadAll() {
+    // One-shot at startup: subscription URL + overrides (~static after install)
+    async loadOnce() {
       try {
-        const [statusRes, subRes, logsRes, ovRes, cfgRes, siRes] = await Promise.all([
-          fetch('/api/status').then(r => r.json()),
+        const [subRes, ovRes] = await Promise.all([
           fetch('/api/subscription').then(r => r.json()),
-          fetch('/api/logs').then(r => r.text()),
           fetch('/api/overrides').then(r => r.json()).catch(() => ({overrides:[]})),
+        ]);
+        if (!this.subUrl) this.subUrl = subRes.url || '';
+        this.overrides = ovRes.overrides || [];
+      } catch (e) { console.warn(e); }
+    },
+
+    // Frequent polling: live status + log tail
+    async fastPoll() {
+      try {
+        const [statusRes, logsRes] = await Promise.all([
+          fetch('/api/status').then(r => r.json()),
+          fetch('/api/logs').then(r => r.text()),
+        ]);
+        this.status = statusRes;
+        this.logs = logsRes;
+      } catch (e) { /* silent */ }
+    },
+
+    // Slow polling: config yaml + subscription traffic info
+    async slowPoll() {
+      try {
+        const [cfgRes, siRes] = await Promise.all([
           fetch('/api/config').then(r => r.text()).catch(() => ''),
           fetch('/api/subscription/info').then(r => r.json()).catch(() => ({present:false})),
         ]);
-        this.status = statusRes;
-        if (!this.subUrl) this.subUrl = subRes.url || '';
-        this.logs = logsRes;
-        this.overrides = ovRes.overrides || [];
         this.configYaml = cfgRes;
         this.subInfo = siRes;
-      } catch (e) { console.warn(e); }
+      } catch (e) { /* silent */ }
+    },
+
+    // Compat shim still called by saveSub / refreshSub for an immediate full update
+    async loadAll() {
+      await Promise.all([this.fastPoll(), this.slowPoll(), this.loadOnce()]);
     },
 
     async saveSub() {
@@ -459,6 +494,28 @@ function app() {
       if (days < 0) return '已过期';
       if (days === 0) return '今日到期';
       return days + ' 天';
+    },
+
+    async toggleMihomo() {
+      this.toggling = true;
+      try {
+        const endpoint = this.status.mihomo_running ? '/api/mihomo/stop' : '/api/mihomo/start';
+        const r = await fetch(endpoint, { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.ok) {
+          this.message = endpoint.endsWith('stop') ? 'mihomo 已停止 (dashboard 仍可访问)' : 'mihomo 已启动';
+          this.messageOK = true;
+        } else {
+          this.message = d.error || '操作失败';
+          this.messageOK = false;
+        }
+        setTimeout(() => this.fastPoll(), 800);
+      } catch (e) {
+        this.message = e.message;
+        this.messageOK = false;
+      } finally {
+        this.toggling = false;
+      }
     },
 
     async copyConfig() {

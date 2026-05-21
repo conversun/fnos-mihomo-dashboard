@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/conversun/fnos-mihomo-dashboard/internal/config"
 	"github.com/conversun/fnos-mihomo-dashboard/internal/handlers"
+	"github.com/conversun/fnos-mihomo-dashboard/internal/supervisor"
 	_ "github.com/breml/rootcerts" // embed Mozilla CA bundle so HTTPS works even without system ca-certificates
 )
 
@@ -24,8 +27,30 @@ func main() {
 	configFile := flag.String("config", "/etc/mihomo/config.yaml", "mihomo config.yaml path")
 	logFile := flag.String("log", "/var/log/mihomo.log", "mihomo log file path")
 	metacubexdDir := flag.String("metacubexd", "", "optional metacubexd static dir to serve at /clash/")
+	mihomoBin := flag.String("mihomo-bin", "", "path to the mihomo executable (enables ON/OFF supervisor)")
+	mihomoConfigDir := flag.String("mihomo-config-dir", "", "directory passed to `mihomo -d <dir>` (defaults to dirname of -config)")
 	subRefreshHours := flag.Int("sub-refresh-hours", 12, "auto-refresh subscription every N hours (0 = off)")
 	flag.Parse()
+
+	cfgMgr := config.New(*configFile)
+	if !cfgMgr.Exists() {
+		if werr := cfgMgr.WriteMinimalConfig(); werr != nil {
+			log.Fatalf("write minimal config: %v", werr)
+		}
+		log.Printf("wrote minimal config.yaml")
+	}
+
+	var sup *supervisor.Supervisor
+	if *mihomoBin != "" {
+		confDir := *mihomoConfigDir
+		if confDir == "" { confDir = filepath.Dir(*configFile) }
+		sup = supervisor.New(*mihomoBin, confDir, *logFile)
+		if err := sup.Start(); err != nil {
+			log.Printf("warn: initial mihomo start failed: %v", err)
+		} else {
+			log.Printf("mihomo supervised, pid=%d, config-dir=%s", sup.PID(), confDir)
+		}
+	}
 
 	mihomoURL, err := url.Parse(*mihomoAPI)
 	if err != nil {
@@ -35,7 +60,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Our API
-	h := handlers.New(*configFile, *logFile, mihomoURL)
+	h := handlers.New(*configFile, *logFile, mihomoURL, sup)
 	mux.HandleFunc("/api/subscription", h.Subscription)
 	mux.HandleFunc("/api/status", h.Status)
 	mux.HandleFunc("/api/logs", h.Logs)
@@ -44,6 +69,9 @@ func main() {
 	mux.HandleFunc("/api/config", h.Config)
 	mux.HandleFunc("/api/subscription/info", h.SubscriptionInfo)
 	mux.HandleFunc("/api/subscription/refresh", h.SubscriptionRefresh)
+	mux.HandleFunc("/api/mihomo/start", h.MihomoStart)
+	mux.HandleFunc("/api/mihomo/stop", h.MihomoStop)
+	mux.HandleFunc("/api/mihomo/restart", h.MihomoRestart)
 
 	// Reverse proxy to mihomo RESTful API (for clients that need raw mihomo API)
 	mihomoProxy := httputil.NewSingleHostReverseProxy(mihomoURL)

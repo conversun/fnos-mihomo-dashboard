@@ -10,6 +10,7 @@ import (
 	"github.com/conversun/fnos-mihomo-dashboard/internal/config"
 	"github.com/conversun/fnos-mihomo-dashboard/internal/mihomo"
 	"github.com/conversun/fnos-mihomo-dashboard/internal/subscription"
+	"github.com/conversun/fnos-mihomo-dashboard/internal/supervisor"
 )
 
 type Handlers struct {
@@ -18,15 +19,17 @@ type Handlers struct {
 	mihomo  *mihomo.Client
 	confPath string
 	subInfo *subscription.Cache
+	sup     *supervisor.Supervisor
 }
 
-func New(configFile, logFile string, mihomoAPI *url.URL) *Handlers {
+func New(configFile, logFile string, mihomoAPI *url.URL, sup *supervisor.Supervisor) *Handlers {
 	return &Handlers{
 		cfg:      config.New(configFile),
 		logFile:  logFile,
 		mihomo:   mihomo.New(mihomoAPI),
 		confPath: configFile,
 		subInfo:  subscription.NewCache(),
+		sup:      sup,
 	}
 }
 
@@ -103,6 +106,10 @@ func (h *Handlers) Subscription(w http.ResponseWriter, r *http.Request) {
 // GET /api/status → {version: ..., currentProxy: ...}
 func (h *Handlers) Status(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{}
+	if h.sup != nil {
+		out["mihomo_running"] = h.sup.Running()
+		out["mihomo_pid"] = h.sup.PID()
+	}
 	if v, err := h.mihomo.Version(); err == nil {
 		out["version"] = v
 	} else {
@@ -213,6 +220,30 @@ func (h *Handlers) Overrides(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"overrides": h.cfg.AppliedOverrides(),
 	})
+}
+
+// POST /api/mihomo/start — start the supervised mihomo process
+func (h *Handlers) MihomoStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost { w.WriteHeader(http.StatusMethodNotAllowed); return }
+	if h.sup == nil { writeErr(w, 503, fmt.Errorf("supervisor not configured")); return }
+	if err := h.sup.Start(); err != nil { writeErr(w, 409, err); return }
+	writeJSON(w, 200, map[string]any{"ok": true, "pid": h.sup.PID()})
+}
+
+// POST /api/mihomo/stop — stop the supervised mihomo process
+func (h *Handlers) MihomoStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost { w.WriteHeader(http.StatusMethodNotAllowed); return }
+	if h.sup == nil { writeErr(w, 503, fmt.Errorf("supervisor not configured")); return }
+	if err := h.sup.Stop(); err != nil { writeErr(w, 409, err); return }
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// POST /api/mihomo/restart — stop then start
+func (h *Handlers) MihomoRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost { w.WriteHeader(http.StatusMethodNotAllowed); return }
+	if h.sup == nil { writeErr(w, 503, fmt.Errorf("supervisor not configured")); return }
+	if err := h.sup.Restart(); err != nil { writeErr(w, 500, err); return }
+	writeJSON(w, 200, map[string]any{"ok": true, "pid": h.sup.PID()})
 }
 
 // splitLastN returns the last n lines of b (joined with newline).

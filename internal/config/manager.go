@@ -330,3 +330,36 @@ func (m *Manager) HasBackup() bool {
 	return err == nil
 }
 
+// WriteMinimalConfig writes a sane starter config.yaml when none exists.
+// Subscription URL is not yet known — user will add it via the dashboard.
+func (m *Manager) WriteMinimalConfig() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cfg := map[string]any{
+		"mixed-port":   7890,
+		"allow-lan":    true,
+		"bind-address": "*",
+		"mode":         "rule",
+		"log-level":    "info",
+		"ipv6":         false,
+		"secret":       "",
+		"proxies":      []any{},
+		"proxy-groups": []any{
+			map[string]any{
+				"name":    "PROXY",
+				"type":    "select",
+				"proxies": []any{"DIRECT"},
+			},
+		},
+		"rules": []any{"MATCH,PROXY"},
+	}
+	applyFnOSOverrides(cfg)
+	return m.writeUnsafe(cfg)
+}
+
+// Exists reports whether the config file is present on disk.
+func (m *Manager) Exists() bool {
+	_, err := os.Stat(m.Path)
+	return err == nil
+}
+
