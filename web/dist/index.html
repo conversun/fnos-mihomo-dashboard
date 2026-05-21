@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mihomo for fnOS</title>
 
-<!-- Apply theme before Tailwind loads to avoid FOUC -->
 <script>
 (function () {
   var stored = localStorage.getItem('theme') || 'auto';
@@ -14,61 +13,67 @@
 })();
 </script>
 
-<!-- shadcn-style design tokens (CSS variables) -->
 <style>
   :root {
     --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --foreground: 240 10% 3.9%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 240 10% 3.9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
     --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive-foreground: 0 0% 98%;
     --success: 142.1 76.2% 36.3%;
     --success-foreground: 355.7 100% 97.3%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    --warning: 38 92% 50%;
+    --warning-foreground: 48 96% 89%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+    --radius: 0.75rem;
   }
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive-foreground: 0 0% 98%;
     --success: 142.1 70.6% 45.3%;
     --success-foreground: 144.9 80.4% 10%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --warning: 48 96% 53%;
+    --warning-foreground: 38 92% 15%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
   }
   html, body { background-color: hsl(var(--background)); color: hsl(var(--foreground)); }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif; }
-  pre, code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif; -webkit-font-smoothing: antialiased; }
+  pre, code, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  .code-block { background: hsl(240 10% 3.9%); color: hsl(0 0% 95%); }
+  .dark .code-block { background: hsl(240 6% 10%); }
+  @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 hsl(var(--success) / 0.4); } 70% { box-shadow: 0 0 0 6px hsl(var(--success) / 0); } 100% { box-shadow: 0 0 0 0 hsl(var(--success) / 0); } }
+  .pulse-dot { animation: pulse-ring 2s infinite; }
 </style>
 
-<!-- Tailwind config: bind utility classes to our CSS variables -->
 <script>
 window.tailwind = window.tailwind || {};
 window.tailwind.config = {
@@ -85,6 +90,7 @@ window.tailwind.config = {
         secondary: { DEFAULT: 'hsl(var(--secondary))', foreground: 'hsl(var(--secondary-foreground))' },
         destructive: { DEFAULT: 'hsl(var(--destructive))', foreground: 'hsl(var(--destructive-foreground))' },
         success: { DEFAULT: 'hsl(var(--success))', foreground: 'hsl(var(--success-foreground))' },
+        warning: { DEFAULT: 'hsl(var(--warning))', foreground: 'hsl(var(--warning-foreground))' },
         muted: { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
         accent: { DEFAULT: 'hsl(var(--accent))', foreground: 'hsl(var(--accent-foreground))' },
         popover: { DEFAULT: 'hsl(var(--popover))', foreground: 'hsl(var(--popover-foreground))' },
@@ -92,8 +98,8 @@ window.tailwind.config = {
       },
       borderRadius: {
         lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        md: 'calc(var(--radius) - 4px)',
+        sm: 'calc(var(--radius) - 6px)',
       },
     }
   }
@@ -104,160 +110,240 @@ window.tailwind.config = {
 </head>
 
 <body class="min-h-screen bg-background text-foreground antialiased">
-<div class="max-w-4xl mx-auto px-6 py-10" x-data="app()" x-init="init()">
 
-  <!-- Header -->
-  <div class="flex items-center justify-between mb-8">
-    <div>
-      <h1 class="text-3xl font-bold tracking-tight">Mihomo</h1>
-      <p class="text-sm text-muted-foreground mt-1">Clash.Meta 多协议代理 · fnOS 集成面板</p>
+<!-- inline SVG icon library: define once, reference via <use> -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></symbol>
+    <symbol id="i-chevron-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="15" x2="22" y2="15"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="15" x2="4" y2="15"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
+  </defs>
+</svg>
+
+<div class="max-w-5xl mx-auto px-6 py-8" x-data="app()" x-init="init()">
+
+  <!-- ============ Header ============ -->
+  <header class="flex items-center justify-between mb-8 gap-4">
+    <div class="flex items-center gap-3">
+      <div class="flex items-center justify-center size-10 rounded-lg bg-primary text-primary-foreground">
+        <svg class="size-5"><use href="#i-shield"/></svg>
+      </div>
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight leading-none">Mihomo</h1>
+        <p class="text-sm text-muted-foreground mt-1">Clash.Meta 多协议代理 · fnOS 集成面板</p>
+      </div>
     </div>
     <div class="flex items-center gap-2">
-      <!-- Theme switcher (auto / light / dark) -->
-      <div class="inline-flex items-center rounded-md border border-border bg-card p-1 text-sm">
-        <template x-for="opt in [['auto','自动'],['light','浅'],['dark','深']]" :key="opt[0]">
-          <button
-            @click="setTheme(opt[0])"
-            class="rounded px-2.5 py-1 transition-colors"
-            :class="theme === opt[0] ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-            x-text="opt[1]"
-          ></button>
-        </template>
+      <!-- Theme switcher: icon-based segmented control -->
+      <div class="inline-flex items-center rounded-md border border-border bg-card p-0.5 text-muted-foreground" role="group" aria-label="主题切换">
+        <button @click="setTheme('light')"
+                :class="theme === 'light' ? 'bg-secondary text-secondary-foreground shadow-sm' : 'hover:text-foreground'"
+                class="inline-flex items-center justify-center size-8 rounded transition-colors" title="浅色">
+          <svg class="size-4"><use href="#i-sun"/></svg>
+        </button>
+        <button @click="setTheme('auto')"
+                :class="theme === 'auto' ? 'bg-secondary text-secondary-foreground shadow-sm' : 'hover:text-foreground'"
+                class="inline-flex items-center justify-center size-8 rounded transition-colors" title="跟随系统">
+          <svg class="size-4"><use href="#i-monitor"/></svg>
+        </button>
+        <button @click="setTheme('dark')"
+                :class="theme === 'dark' ? 'bg-secondary text-secondary-foreground shadow-sm' : 'hover:text-foreground'"
+                class="inline-flex items-center justify-center size-8 rounded transition-colors" title="深色">
+          <svg class="size-4"><use href="#i-moon"/></svg>
+        </button>
       </div>
-      <a href="/clash/" class="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity">
-        高级管理 (MetaCubeXD) →
+      <a href="/clash/" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 h-9 text-sm font-medium hover:opacity-90 transition-opacity">
+        <span>高级管理</span>
+        <svg class="size-4"><use href="#i-arrow-right"/></svg>
       </a>
     </div>
-  </div>
+  </header>
 
-  <!-- Status bar -->
-  <div class="bg-card text-card-foreground rounded-lg border border-border shadow-sm p-5 mb-6 grid grid-cols-2 gap-4">
-    <div>
-      <div class="text-xs text-muted-foreground uppercase tracking-wide">内核版本</div>
-      <div class="text-lg font-semibold mt-1" x-text="status.version?.version || '—'"></div>
-    </div>
-    <div>
-      <div class="text-xs text-muted-foreground uppercase tracking-wide">连接状态</div>
-      <div class="mt-1">
-        <span
-          class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
-          :class="status.version ? 'bg-success/15 text-success' : 'bg-destructive/15 text-destructive'"
-          x-text="status.version ? '● 运行中' : '○ 离线'"
-        ></span>
+  <!-- ============ Status grid ============ -->
+  <section class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+    <div class="bg-card text-card-foreground rounded-lg border border-border p-4">
+      <div class="flex items-center gap-2 text-muted-foreground mb-2">
+        <svg class="size-4"><use href="#i-cpu"/></svg>
+        <span class="text-xs font-medium uppercase tracking-wide">内核版本</span>
       </div>
+      <div class="text-xl font-semibold" x-text="status.version?.version || '—'"></div>
+      <div class="text-xs text-muted-foreground mt-1" x-text="status.version?.meta ? 'Mihomo (Clash.Meta)' : '内核未就绪'"></div>
     </div>
-  </div>
-
-  <!-- Subscription -->
-  <div class="bg-card text-card-foreground rounded-lg border border-border shadow-sm p-6 mb-6">
-    <h2 class="text-lg font-semibold leading-none tracking-tight mb-1">订阅管理</h2>
-    <p class="text-sm text-muted-foreground mb-4">填入 Clash 格式订阅 URL,mihomo 会自动拉取节点并每 24 小时刷新。</p>
-    <div class="flex gap-2">
-      <input
-        type="url"
-        x-model="subUrl"
-        placeholder="https://your-subscription-url/clash"
-        class="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background"
-      >
-      <button
-        @click="saveSub"
-        :disabled="saving"
-        class="inline-flex items-center justify-center rounded-md bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:pointer-events-none transition-opacity"
-      >
-        <span x-show="!saving">保存并应用</span>
-        <span x-show="saving">应用中…</span>
-      </button>
-    </div>
-    <p
-      x-show="message"
-      class="mt-3 text-sm"
-      :class="messageOK ? 'text-success' : 'text-destructive'"
-      x-text="message"
-    ></p>
-
-    <!-- Subscription info -->
-    <div x-show="subInfo.present && subInfo.info" class="mt-4 pt-4 border-t border-border grid grid-cols-3 gap-3 text-sm">
-      <div>
-        <div class="text-xs text-muted-foreground uppercase tracking-wide">已用流量</div>
-        <div class="font-semibold mt-0.5" x-text="formatTraffic(subInfo.info)"></div>
-      </div>
-      <div>
-        <div class="text-xs text-muted-foreground uppercase tracking-wide">剩余天数</div>
-        <div class="font-semibold mt-0.5" x-text="formatExpire(subInfo.info?.expire)"></div>
-      </div>
-      <div class="text-right">
-        <button
-          @click="refreshSub"
-          :disabled="refreshing"
-          class="inline-flex items-center justify-center rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground disabled:opacity-50 transition-colors"
-        >
-          <span x-show="!refreshing">立即更新订阅</span>
-          <span x-show="refreshing">更新中…</span>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- fnOS Overrides -->
-  <div class="bg-card text-card-foreground rounded-lg border border-border shadow-sm p-6 mb-6">
-    <h2 class="text-lg font-semibold leading-none tracking-tight mb-1">fnOS 旁路由优化</h2>
-    <p class="text-sm text-muted-foreground mb-4">每次保存订阅后,dashboard 自动确保以下字段适配 fnOS 旁路由场景 (基于 mihomo 实战经验)</p>
-    <ul class="flex flex-col gap-2 text-sm">
-      <template x-for="o in overrides" :key="o.key">
-        <li class="flex items-start gap-2">
-          <span class="text-success mt-0.5">✓</span>
-          <div>
-            <code class="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded" x-text="o.key"></code>
-            <span class="ml-1" x-text="o.desc"></span>
-          </div>
-        </li>
-      </template>
-    </ul>
-  </div>
-
-  <!-- Final config.yaml -->
-  <div class="bg-card text-card-foreground rounded-lg border border-border shadow-sm p-6 mb-6">
-    <div class="flex items-center justify-between mb-3">
-      <div>
-        <h2 class="text-lg font-semibold leading-none tracking-tight">最终配置文件</h2>
-        <p class="text-sm text-muted-foreground mt-1">
-          dashboard 实际写入 mihomo 的
-          <code class="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded">config.yaml</code>
-          (含 fnOS 覆盖)
-        </p>
+    <div class="bg-card text-card-foreground rounded-lg border border-border p-4">
+      <div class="flex items-center gap-2 text-muted-foreground mb-2">
+        <svg class="size-4"><use href="#i-activity"/></svg>
+        <span class="text-xs font-medium uppercase tracking-wide">连接状态</span>
       </div>
       <div class="flex items-center gap-2">
-        <button
-          @click="copyConfig"
-          class="inline-flex items-center justify-center rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
-        >
-          <span x-show="!copied">复制</span>
-          <span x-show="copied" class="text-success">✓ 已复制</span>
+        <span class="inline-block size-2 rounded-full"
+              :class="status.version ? 'bg-success pulse-dot' : 'bg-destructive'"></span>
+        <span class="text-xl font-semibold" x-text="status.version ? '运行中' : '离线'"></span>
+      </div>
+      <div class="text-xs text-muted-foreground mt-1">监听 :9097 · 代理 :7890</div>
+    </div>
+    <div class="bg-card text-card-foreground rounded-lg border border-border p-4">
+      <div class="flex items-center gap-2 text-muted-foreground mb-2">
+        <svg class="size-4"><use href="#i-database"/></svg>
+        <span class="text-xs font-medium uppercase tracking-wide">订阅</span>
+      </div>
+      <div class="text-xl font-semibold truncate"
+           x-text="subInfo.info ? formatTraffic(subInfo.info) : (subInfo.present ? '已配置' : '未配置')"></div>
+      <div class="text-xs text-muted-foreground mt-1"
+           x-text="subInfo.info ? ('剩余 ' + formatExpire(subInfo.info.expire)) : (subInfo.present ? '机场未返回流量信息' : '请在下方填入 URL')"></div>
+    </div>
+  </section>
+
+  <!-- ============ Subscription ============ -->
+  <section class="bg-card text-card-foreground rounded-lg border border-border mb-6">
+    <div class="p-6">
+      <div class="flex items-center gap-2 mb-1">
+        <svg class="size-5 text-muted-foreground"><use href="#i-link"/></svg>
+        <h2 class="text-base font-semibold leading-none">订阅管理</h2>
+      </div>
+      <p class="text-sm text-muted-foreground mb-4 ml-7">填入 Clash 格式订阅 URL,dashboard 会拉取整个 yaml + 应用 fnOS 旁路由 override 后写入 mihomo</p>
+
+      <div class="flex flex-col sm:flex-row gap-2">
+        <div class="relative flex-1">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none"><use href="#i-link"/></svg>
+          <input type="url" x-model="subUrl"
+                 placeholder="https://your-subscription-url/clash"
+                 class="w-full rounded-md border border-input bg-background pl-9 pr-3 h-10 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background transition-shadow">
+        </div>
+        <button @click="saveSub" :disabled="saving"
+                class="inline-flex items-center justify-center gap-2 rounded-md bg-primary text-primary-foreground px-5 h-10 text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:pointer-events-none transition-opacity">
+          <svg class="size-4" x-show="!saving"><use href="#i-check"/></svg>
+          <svg class="size-4 animate-spin" x-show="saving" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+          <span x-text="saving ? '应用中…' : '保存并应用'"></span>
         </button>
-        <button
-          @click="showConfig = !showConfig"
-          class="inline-flex items-center justify-center rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
-        >
-          <span x-text="showConfig ? '收起' : '展开'"></span>
+      </div>
+
+      <p x-show="message" x-transition class="mt-3 text-sm flex items-start gap-2"
+         :class="messageOK ? 'text-success' : 'text-destructive'">
+        <svg class="size-4 mt-0.5 shrink-0" x-show="messageOK"><use href="#i-check"/></svg>
+        <svg class="size-4 mt-0.5 shrink-0" x-show="!messageOK"><use href="#i-info"/></svg>
+        <span x-text="message"></span>
+      </p>
+    </div>
+
+    <!-- Subscription stats: only when info available -->
+    <div x-show="subInfo.present && subInfo.info" x-transition
+         class="border-t border-border px-6 py-4 grid grid-cols-3 gap-4">
+      <div>
+        <div class="text-[11px] text-muted-foreground uppercase tracking-wide mb-1">已用流量</div>
+        <div class="text-sm font-semibold tabular-nums" x-text="formatTraffic(subInfo.info)"></div>
+      </div>
+      <div>
+        <div class="text-[11px] text-muted-foreground uppercase tracking-wide mb-1">剩余天数</div>
+        <div class="text-sm font-semibold tabular-nums" x-text="formatExpire(subInfo.info?.expire)"></div>
+      </div>
+      <div class="flex items-end justify-end">
+        <button @click="refreshSub" :disabled="refreshing"
+                class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 h-8 text-xs hover:bg-accent hover:text-accent-foreground disabled:opacity-50 transition-colors">
+          <svg class="size-3.5" :class="{'animate-spin': refreshing}"><use href="#i-refresh"/></svg>
+          <span x-text="refreshing ? '更新中' : '立即更新'"></span>
         </button>
       </div>
     </div>
-    <pre
-      x-show="showConfig"
-      x-text="configYaml || '加载中…'"
-      class="text-xs bg-muted text-foreground p-3 rounded-md overflow-auto max-h-96 whitespace-pre border border-border"
-    ></pre>
-  </div>
+  </section>
 
-  <!-- Logs -->
-  <div class="bg-card text-card-foreground rounded-lg border border-border shadow-sm p-6">
-    <h2 class="text-lg font-semibold leading-none tracking-tight mb-3">日志 (最近 100 行)</h2>
-    <pre
-      class="text-xs bg-muted text-foreground p-3 rounded-md overflow-auto h-64 whitespace-pre-wrap border border-border"
-      x-text="logs || '加载中…'"
-    ></pre>
-  </div>
+  <!-- ============ fnOS Overrides ============ -->
+  <section class="bg-card text-card-foreground rounded-lg border border-border p-6 mb-6">
+    <div class="flex items-center gap-2 mb-1">
+      <svg class="size-5 text-muted-foreground"><use href="#i-shield"/></svg>
+      <h2 class="text-base font-semibold leading-none">fnOS 旁路由优化</h2>
+    </div>
+    <p class="text-sm text-muted-foreground mb-4 ml-7">每次保存订阅后,dashboard 自动接管以下字段使其适配 fnOS 旁路由场景 (基于 mihomo 实战经验)</p>
 
+    <div class="grid gap-2.5 ml-7">
+      <template x-for="o in overrides" :key="o.key">
+        <div class="flex items-start gap-3 text-sm">
+          <span class="flex items-center justify-center size-5 rounded-full bg-success/10 text-success shrink-0 mt-0.5">
+            <svg class="size-3"><use href="#i-check"/></svg>
+          </span>
+          <div class="flex-1 min-w-0">
+            <code class="mono inline-block bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded text-[12px]" x-text="o.key"></code>
+            <span class="text-foreground/80 ml-1" x-text="o.desc"></span>
+          </div>
+        </div>
+      </template>
+    </div>
+  </section>
+
+  <!-- ============ Final config ============ -->
+  <section class="bg-card text-card-foreground rounded-lg border border-border mb-6">
+    <div class="p-6 pb-4">
+      <div class="flex items-center justify-between gap-4 flex-wrap">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-1">
+            <svg class="size-5 text-muted-foreground"><use href="#i-file"/></svg>
+            <h2 class="text-base font-semibold leading-none">最终配置文件</h2>
+          </div>
+          <p class="text-sm text-muted-foreground mt-1 ml-7">
+            dashboard 实际写入 mihomo 的
+            <code class="mono inline bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded text-[12px]">config.yaml</code>
+            (含 fnOS 覆盖)
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="copyConfig"
+                  class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 h-8 text-xs hover:bg-accent hover:text-accent-foreground transition-colors">
+            <svg class="size-3.5" x-show="!copied"><use href="#i-copy"/></svg>
+            <svg class="size-3.5 text-success" x-show="copied"><use href="#i-check"/></svg>
+            <span x-text="copied ? '已复制' : '复制'"></span>
+          </button>
+          <button @click="showConfig = !showConfig"
+                  class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 h-8 text-xs hover:bg-accent hover:text-accent-foreground transition-colors">
+            <svg class="size-3.5" x-show="!showConfig"><use href="#i-chevron-down"/></svg>
+            <svg class="size-3.5" x-show="showConfig"><use href="#i-chevron-up"/></svg>
+            <span x-text="showConfig ? '收起' : '展开'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div x-show="showConfig" x-transition class="px-6 pb-6">
+      <pre x-text="configYaml || '加载中…'"
+           class="code-block text-[12px] leading-relaxed p-4 rounded-md overflow-auto max-h-96 whitespace-pre"></pre>
+    </div>
+  </section>
+
+  <!-- ============ Logs ============ -->
+  <section class="bg-card text-card-foreground rounded-lg border border-border p-6 mb-6">
+    <div class="flex items-center gap-2 mb-3">
+      <svg class="size-5 text-muted-foreground"><use href="#i-terminal"/></svg>
+      <h2 class="text-base font-semibold leading-none">日志</h2>
+      <span class="text-xs text-muted-foreground ml-auto">最近 100 行 · 5s 自动刷新</span>
+    </div>
+    <pre x-text="logs || '加载中…'"
+         class="code-block text-[12px] leading-relaxed p-4 rounded-md overflow-auto h-72 whitespace-pre-wrap"></pre>
+  </section>
+
+  <!-- ============ Footer ============ -->
+  <footer class="text-center text-xs text-muted-foreground py-4 flex items-center justify-center gap-2">
+    <span>fnos-mihomo-dashboard</span>
+    <span>·</span>
+    <a href="https://github.com/conversun/fnos-mihomo-dashboard"
+       target="_blank" rel="noopener"
+       class="inline-flex items-center gap-1 hover:text-foreground transition-colors">
+      conversun/fnos-mihomo-dashboard
+      <svg class="size-3"><use href="#i-arrow-right"/></svg>
+    </a>
+  </footer>
 </div>
 
 <script>
@@ -280,7 +366,6 @@ function app() {
     async init() {
       this.theme = localStorage.getItem('theme') || 'auto';
       this.applyTheme();
-      // React to system changes when theme is 'auto'
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if (this.theme === 'auto') this.applyTheme();
       });
@@ -330,15 +415,15 @@ function app() {
         });
         const d = await r.json();
         if (r.ok && d.ok) {
-          this.message = d.warning ? '⚠ ' + d.warning : '✓ 订阅已应用, mihomo 重新加载完成';
+          this.message = d.warning ? d.warning : '订阅已应用,mihomo 重新加载完成';
           this.messageOK = !d.warning;
           setTimeout(() => this.loadAll(), 2000);
         } else {
-          this.message = '✗ ' + (d.error || 'unknown error') + (d.detail ? ' [' + d.detail + ']' : '');
+          this.message = (d.error || 'unknown error') + (d.detail ? ' — ' + d.detail : '');
           this.messageOK = false;
         }
       } catch (e) {
-        this.message = '✗ ' + e.message;
+        this.message = e.message;
         this.messageOK = false;
       } finally {
         this.saving = false;
@@ -350,12 +435,12 @@ function app() {
       try {
         const r = await fetch('/api/subscription/refresh', { method: 'POST' });
         if (r.ok) {
-          this.message = '✓ 订阅已立即刷新';
+          this.message = '订阅已立即刷新';
           this.messageOK = true;
           await this.loadAll();
         } else {
           const d = await r.json();
-          this.message = '✗ ' + (d.error || '刷新失败');
+          this.message = d.error || '刷新失败';
           this.messageOK = false;
         }
       } finally { this.refreshing = false; }
@@ -364,9 +449,8 @@ function app() {
     formatTraffic(info) {
       if (!info || !info.total) return '—';
       const used = (info.upload || 0) + (info.download || 0);
-      const gb = (n) => (n / 1024 / 1024 / 1024).toFixed(2);
-      const pct = ((used / info.total) * 100).toFixed(1);
-      return `${gb(used)} / ${gb(info.total)} GB (${pct}%)`;
+      const gb = (n) => (n / 1024 / 1024 / 1024).toFixed(1);
+      return `${gb(used)} / ${gb(info.total)} GB`;
     },
 
     formatExpire(expire) {
@@ -387,6 +471,5 @@ function app() {
   };
 }
 </script>
-
 </body>
 </html>
