@@ -215,11 +215,53 @@ func (h *Handlers) Config(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-// GET /api/overrides — list fnOS overrides applied to every saved config
+// GET  /api/overrides — list fnOS overrides and current editable settings
+// POST /api/overrides — save override switches and YAML snippets
+// DELETE /api/overrides — reset to built-in defaults
 func (h *Handlers) Overrides(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{
-		"overrides": h.cfg.AppliedOverrides(),
-	})
+	switch r.Method {
+	case http.MethodGet:
+		settings, err := h.cfg.OverrideSettings()
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{
+			"settings":  settings,
+			"defaults":  config.DefaultOverrideSettings(),
+			"overrides": h.cfg.AppliedOverrides(),
+		})
+	case http.MethodPost:
+		var settings config.OverrideSettings
+		if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if err := h.cfg.SetOverrideSettings(settings); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		saved, _ := h.cfg.OverrideSettings()
+		writeJSON(w, 200, map[string]any{
+			"ok":        true,
+			"settings":  saved,
+			"defaults":  config.DefaultOverrideSettings(),
+			"overrides": h.cfg.AppliedOverrides(),
+		})
+	case http.MethodDelete:
+		if err := h.cfg.ResetOverrideSettings(); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{
+			"ok":        true,
+			"settings":  config.DefaultOverrideSettings(),
+			"defaults":  config.DefaultOverrideSettings(),
+			"overrides": h.cfg.AppliedOverrides(),
+		})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }
 
 // POST /api/mihomo/start — start the supervised mihomo process

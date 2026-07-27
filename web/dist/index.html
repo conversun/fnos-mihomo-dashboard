@@ -303,17 +303,29 @@ window.tailwind.config = {
       <svg class="size-5 text-muted-foreground"><use href="#i-shield"/></svg>
       <h2 class="text-base font-semibold leading-none">fnOS 旁路由优化</h2>
     </div>
-    <p class="text-sm text-muted-foreground mb-4 ml-7">每次保存订阅后,dashboard 自动接管以下字段使其适配 fnOS 旁路由场景 (基于 mihomo 实战经验)</p>
+    <p class="text-sm text-muted-foreground mb-4 ml-7">开启表示保存/刷新订阅时使用下方 YAML 覆盖；关闭表示保留订阅或你手动写入的配置。</p>
 
-    <div class="grid gap-2.5 ml-7">
-      <template x-for="o in overrides" :key="o.key">
-        <div class="flex items-start gap-3 text-sm">
-          <span class="flex items-center justify-center size-5 rounded-full bg-success/10 text-success shrink-0 mt-0.5">
-            <svg class="size-3"><use href="#i-check"/></svg>
-          </span>
-          <div class="flex-1 min-w-0">
-            <code class="mono inline-block bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded text-[12px]" x-text="o.key"></code>
-            <span class="text-foreground/80 ml-1" x-text="o.desc"></span>
+    <div class="flex items-center gap-2 ml-7 mb-4">
+      <button @click="saveOverrides" :disabled="savingOverrides" class="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 h-8 text-xs hover:opacity-90 disabled:opacity-50 transition-opacity">
+        <span x-text="savingOverrides ? '保存中' : '保存设置'"></span>
+      </button>
+      <button @click="resetOverrides" class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 h-8 text-xs hover:bg-accent hover:text-accent-foreground transition-colors">恢复默认</button>
+    </div>
+
+    <div class="grid gap-3 ml-7">
+      <template x-for="item in overrideItems" :key="item.key">
+        <div class="rounded-md border border-border p-3">
+          <label class="flex items-center justify-between gap-3 mb-2">
+            <span>
+              <code class="mono inline-block bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded text-[12px]" x-text="item.key"></code>
+              <span class="text-xs text-muted-foreground ml-1" x-text="item.desc"></span>
+            </span>
+            <input type="checkbox" x-model="overrideSettings[item.enabledKey]" class="size-4">
+          </label>
+          <textarea x-show="item.yamlKey" x-model="overrideSettings[item.yamlKey]" spellcheck="false" class="mono w-full min-h-32 rounded-md border border-input bg-background p-3 text-[12px] leading-relaxed focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background"></textarea>
+          <div x-show="item.yamlKey" class="flex items-center justify-between gap-3 mt-2">
+            <p class="text-xs text-muted-foreground">只写此字段下一级内容，不要再包一层字段名。</p>
+            <button @click="restoreOverrideItem(item.yamlKey)" class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 h-7 text-xs hover:bg-accent hover:text-accent-foreground transition-colors">恢复此项默认</button>
           </div>
         </div>
       </template>
@@ -388,6 +400,16 @@ function app() {
     status: {},
     logs: '',
     overrides: [],
+    overrideSettings: {},
+    overrideDefaults: {},
+    overrideItems: [
+      { key: 'profile', enabledKey: 'profile', yamlKey: 'profile_yaml', desc: '策略组选择与 fake-ip 池持久化' },
+      { key: 'dns', enabledKey: 'dns', yamlKey: 'dns_yaml', desc: 'DNS、fake-ip、nameserver 配置' },
+      { key: 'tun', enabledKey: 'tun', yamlKey: 'tun_yaml', desc: 'TUN、路由、DNS 劫持配置' },
+      { key: 'sniffer', enabledKey: 'sniffer', yamlKey: 'sniffer_yaml', desc: 'TLS/HTTP/QUIC 嗅探配置' },
+      { key: 'external-controller', enabledKey: 'external_controller', yamlKey: '', desc: '面板反代连接 mihomo 的控制端口' },
+    ],
+    savingOverrides: false,
     configYaml: '',
     showConfig: false,
     copied: false,
@@ -431,8 +453,67 @@ function app() {
           fetch('/api/overrides').then(r => r.json()).catch(() => ({overrides:[]})),
         ]);
         if (!this.subUrl) this.subUrl = subRes.url || '';
-        this.overrides = ovRes.overrides || [];
+        this.applyOverridePayload(ovRes);
       } catch (e) { console.warn(e); }
+    },
+
+    applyOverridePayload(d) {
+      this.overrides = d?.overrides || [];
+      this.overrideDefaults = d?.defaults || {};
+      this.overrideSettings = d?.settings || JSON.parse(JSON.stringify(this.overrideDefaults || {}));
+    },
+
+    restoreOverrideItem(yamlKey) {
+      if (!yamlKey || !this.overrideDefaults) return;
+      this.overrideSettings[yamlKey] = this.overrideDefaults[yamlKey] || '';
+    },
+
+    async saveOverrides() {
+      this.savingOverrides = true;
+      this.message = '';
+      try {
+        const r = await fetch('/api/overrides', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.overrideSettings),
+        });
+        const d = await r.json();
+        if (r.ok && d.ok) {
+          this.applyOverridePayload(d);
+          this.message = 'fnOS 覆盖设置已保存；下次保存或刷新订阅时生效';
+          this.messageOK = true;
+        } else {
+          this.message = d.error || '保存覆盖设置失败';
+          this.messageOK = false;
+        }
+      } catch (e) {
+        this.message = e.message;
+        this.messageOK = false;
+      } finally {
+        this.savingOverrides = false;
+      }
+    },
+
+    async resetOverrides() {
+      this.savingOverrides = true;
+      this.message = '';
+      try {
+        const r = await fetch('/api/overrides', { method: 'DELETE' });
+        const d = await r.json();
+        if (r.ok && d.ok) {
+          this.applyOverridePayload(d);
+          this.message = 'fnOS 覆盖设置已恢复默认';
+          this.messageOK = true;
+        } else {
+          this.message = d.error || '恢复默认失败';
+          this.messageOK = false;
+        }
+      } catch (e) {
+        this.message = e.message;
+        this.messageOK = false;
+      } finally {
+        this.savingOverrides = false;
+      }
     },
 
     // Frequent polling: live status + log tail

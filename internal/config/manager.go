@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,158 @@ type Manager struct {
 
 func New(path string) *Manager {
 	return &Manager{Path: path}
+}
+
+// OverrideSettings controls which fnOS-managed fields are forcibly written into config.yaml.
+// Defaults keep the upstream behavior. Turning a switch off preserves the subscription/user value.
+type OverrideSettings struct {
+	ExternalController bool   `json:"external_controller"`
+	Profile            bool   `json:"profile"`
+	DNS                bool   `json:"dns"`
+	TUN                bool   `json:"tun"`
+	Sniffer            bool   `json:"sniffer"`
+	ProfileYAML        string `json:"profile_yaml"`
+	DNSYAML            string `json:"dns_yaml"`
+	TUNYAML            string `json:"tun_yaml"`
+	SnifferYAML        string `json:"sniffer_yaml"`
+}
+
+func DefaultOverrideSettings() OverrideSettings {
+	return OverrideSettings{
+		ExternalController: true,
+		Profile:            true,
+		DNS:                true,
+		TUN:                true,
+		Sniffer:            true,
+		ProfileYAML:        mustYAML(defaultProfileConfig()),
+		DNSYAML:            mustYAML(defaultDNSConfig()),
+		TUNYAML:            mustYAML(defaultTUNConfig()),
+		SnifferYAML:        mustYAML(defaultSnifferConfig()),
+	}
+}
+
+func (m *Manager) overridesPath() string {
+	return filepath.Join(filepath.Dir(m.Path), ".fnos-overrides.json")
+}
+
+// OverrideSettings returns saved override switches and editable YAML snippets.
+// Missing files/fields use safe defaults.
+func (m *Manager) OverrideSettings() (OverrideSettings, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.overrideSettingsUnsafe()
+}
+
+func (m *Manager) overrideSettingsUnsafe() (OverrideSettings, error) {
+	settings := DefaultOverrideSettings()
+	b, err := os.ReadFile(m.overridesPath())
+	if os.IsNotExist(err) {
+		return settings, nil
+	}
+	if err != nil {
+		return settings, err
+	}
+	if err := json.Unmarshal(b, &settings); err != nil {
+		return DefaultOverrideSettings(), fmt.Errorf("parse override settings: %w", err)
+	}
+	return normalizeOverrideSettings(settings), nil
+}
+
+// SetOverrideSettings persists override switches and custom YAML snippets for future subscription saves/refreshes.
+func (m *Manager) SetOverrideSettings(settings OverrideSettings) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	settings = normalizeOverrideSettings(settings)
+	if err := validateOverrideSettings(settings); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := m.overridesPath() + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, m.overridesPath())
+}
+
+// ResetOverrideSettings removes custom settings so the built-in defaults are used again.
+func (m *Manager) ResetOverrideSettings() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := os.Remove(m.overridesPath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func normalizeOverrideSettings(settings OverrideSettings) OverrideSettings {
+	defaults := DefaultOverrideSettings()
+	if strings.TrimSpace(settings.ProfileYAML) == "" {
+		settings.ProfileYAML = defaults.ProfileYAML
+	}
+	if strings.TrimSpace(settings.DNSYAML) == "" {
+		settings.DNSYAML = defaults.DNSYAML
+	}
+	if strings.TrimSpace(settings.TUNYAML) == "" {
+		settings.TUNYAML = defaults.TUNYAML
+	}
+	if strings.TrimSpace(settings.SnifferYAML) == "" {
+		settings.SnifferYAML = defaults.SnifferYAML
+	}
+	return settings
+}
+
+func validateOverrideSettings(settings OverrideSettings) error {
+	if settings.Profile {
+		if _, err := parseYAMLMap(settings.ProfileYAML, "profile"); err != nil {
+			return err
+		}
+	}
+	if settings.DNS {
+		if _, err := parseYAMLMap(settings.DNSYAML, "dns"); err != nil {
+			return err
+		}
+	}
+	if settings.TUN {
+		if _, err := parseYAMLMap(settings.TUNYAML, "tun"); err != nil {
+			return err
+		}
+	}
+	if settings.Sniffer {
+		if _, err := parseYAMLMap(settings.SnifferYAML, "sniffer"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func parseYAMLMap(raw, name string) (map[string]any, error) {
+	var out map[string]any
+	if err := yaml.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, fmt.Errorf("parse %s yaml: %w", name, err)
+	}
+	if out == nil {
+		return nil, fmt.Errorf("%s yaml cannot be empty", name)
+	}
+	return out, nil
+}
+
+func mustYAML(v any) string {
+	b, err := yaml.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return strings.TrimSpace(string(b)) + "\n"
+}
+
+func (m *Manager) applyFnOSOverrides(cfg map[string]any) error {
+	settings, err := m.overrideSettingsUnsafe()
+	if err != nil {
+		settings = DefaultOverrideSettings()
+	}
+	return applyFnOSOverrides(cfg, settings)
 }
 
 // Read returns the raw config as a map (preserving order via yaml.Node would need more work,
@@ -118,7 +271,9 @@ func (m *Manager) SetSubscription(url string) error {
 		cfg["rules"] = []any{"MATCH,PROXY"}
 	}
 
-	applyFnOSOverrides(cfg)
+	if err := m.applyFnOSOverrides(cfg); err != nil {
+		return err
+	}
 
 	return m.writeUnsafe(cfg)
 }
@@ -143,9 +298,8 @@ func (m *Manager) GetSubscription() (string, error) {
 }
 
 // SetSubscriptionFromURL persists the URL and writes the entire subscription
-// yaml as the mihomo config, then applies fnOS forced overrides (external-
-// controller, profile, dns, tun, sniffer). The user's proxies / proxy-groups
-// / rules / rule-providers / etc. from the subscription are preserved as-is.
+// yaml as the mihomo config, then applies enabled fnOS overrides. User proxies /
+// proxy-groups / rules / rule-providers / etc. from the subscription are preserved as-is.
 func (m *Manager) SetSubscriptionFromURL(url string, fullYAML []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -161,10 +315,9 @@ func (m *Manager) SetSubscriptionFromURL(url string, fullYAML []byte) error {
 		return fmt.Errorf("subscription yaml has no proxies (empty / not a Clash subscription)")
 	}
 
-	// Apply fnOS forced overrides — this is where the subscription's dns / tun /
-	// sniffer / external-controller / profile are replaced with the fnOS gateway
-	// defaults. User proxies / proxy-groups / rules / rule-providers are kept.
-	applyFnOSOverrides(cfg)
+	if err := m.applyFnOSOverrides(cfg); err != nil {
+		return err
+	}
 
 	if err := os.WriteFile(m.subURLPath(), []byte(url), 0o644); err != nil {
 		return err
@@ -185,38 +338,65 @@ func (m *Manager) writeUnsafe(cfg map[string]any) error {
 	return os.Rename(tmp, m.Path)
 }
 
-
 // applyFnOSOverrides hardens a user-supplied subscription config for the
-// fnOS 旁路网关 scenario. These fields are owned by fnOS for stability +
-// framework consistency and cannot be overridden by the subscription:
-//
-//   1. external-controller pinned to 127.0.0.1:19090 (dashboard reverse-proxy)
-//   2. external-ui removed (dashboard serves MetaCubeXD at /clash/)
-//   3. profile.store-selected + store-fake-ip = true (persist UI choices)
-//   4. dns: full sidecar-gateway DNS stack from ../docs/mihomo.md
-//   5. tun: gateway-grade TUN config; enable defaults to false (opt-in
-//      via MetaCubeXD or direct yaml edit). 198.18.x must NOT be excluded.
-//   6. sniffer: TLS/HTTP/QUIC; transparent-proxy rules need it to match
-//
-// What we explicitly DO NOT touch (the subscription owns these):
-//   - proxies, proxy-groups, rules, rule-providers (business config)
-//   - mixed-port / mode / log-level / ipv6 / allow-lan / bind-address
-//   - any other field the subscription set
-func applyFnOSOverrides(cfg map[string]any) {
-	// 1. fnOS framework fields (NOT NEGOTIABLE)
-	cfg["external-controller"] = "127.0.0.1:19090"
-	delete(cfg, "external-ui")
-	delete(cfg, "external-controller-tls")
-	delete(cfg, "external-controller-unix")
+// fnOS 旁路网关 scenario. Enabled fields are owned by fnOS for stability +
+// framework consistency; disabled fields preserve subscription/user values.
+func applyFnOSOverrides(cfg map[string]any, settings OverrideSettings) error {
+	settings = normalizeOverrideSettings(settings)
+	if err := validateOverrideSettings(settings); err != nil {
+		return err
+	}
 
-	// 2. profile (persist user choices across reloads / restarts)
-	cfg["profile"] = map[string]any{
+	if settings.ExternalController {
+		cfg["external-controller"] = "127.0.0.1:19090"
+		delete(cfg, "external-ui")
+		delete(cfg, "external-controller-tls")
+		delete(cfg, "external-controller-unix")
+	}
+
+	if settings.Profile {
+		profile, err := parseYAMLMap(settings.ProfileYAML, "profile")
+		if err != nil {
+			return err
+		}
+		cfg["profile"] = profile
+	}
+
+	if settings.DNS {
+		dns, err := parseYAMLMap(settings.DNSYAML, "dns")
+		if err != nil {
+			return err
+		}
+		cfg["dns"] = dns
+	}
+
+	if settings.TUN {
+		tun, err := parseYAMLMap(settings.TUNYAML, "tun")
+		if err != nil {
+			return err
+		}
+		cfg["tun"] = tun
+	}
+
+	if settings.Sniffer {
+		sniffer, err := parseYAMLMap(settings.SnifferYAML, "sniffer")
+		if err != nil {
+			return err
+		}
+		cfg["sniffer"] = sniffer
+	}
+	return nil
+}
+
+func defaultProfileConfig() map[string]any {
+	return map[string]any{
 		"store-selected": true,
 		"store-fake-ip":  true,
 	}
+}
 
-	// 3. DNS — full sidecar-gateway stack (see ../docs/mihomo.md §1, §3)
-	cfg["dns"] = map[string]any{
+func defaultDNSConfig() map[string]any {
+	return map[string]any{
 		"enable":                          true,
 		"cache-algorithm":                 "arc",
 		"prefer-h3":                       false,
@@ -246,11 +426,10 @@ func applyFnOSOverrides(cfg map[string]any) {
 			"ntp.*.com", "time.*.com", "time.*.gov", "time.*.edu.cn", "+.ntp.org.cn",
 		},
 	}
+}
 
-	// 4. TUN — gateway-grade config. enable defaults to false (opt-in via
-	//    MetaCubeXD or direct yaml edit). 198.18.x is intentionally NOT in
-	//    inet4-route-exclude-address (fake-ip must be handled by TUN).
-	cfg["tun"] = map[string]any{
+func defaultTUNConfig() map[string]any {
+	return map[string]any{
 		"enable":                true,
 		"device":                "Meta",
 		"stack":                 "mixed",
@@ -267,9 +446,10 @@ func applyFnOSOverrides(cfg map[string]any) {
 			"169.254.0.0/16",
 		},
 	}
+}
 
-	// 5. Sniffer — transparent-proxy rule matching needs this
-	cfg["sniffer"] = map[string]any{
+func defaultSnifferConfig() map[string]any {
+	return map[string]any{
 		"enable": true,
 		"sniff": map[string]any{
 			"TLS":  map[string]any{"ports": []any{443, 8443}},
@@ -284,12 +464,22 @@ func applyFnOSOverrides(cfg map[string]any) {
 
 // AppliedOverrides returns a human-readable list of overrides applied to the config.
 func (m *Manager) AppliedOverrides() []map[string]any {
+	settings, err := m.OverrideSettings()
+	if err != nil {
+		settings = DefaultOverrideSettings()
+	}
+	state := func(enabled bool) string {
+		if enabled {
+			return "managed"
+		}
+		return "preserved"
+	}
 	return []map[string]any{
-		{"key": "external-controller", "desc": "fnOS 反代用 127.0.0.1:19090 (强制)", "value": "127.0.0.1:19090"},
-		{"key": "profile.store-selected / store-fake-ip", "desc": "持久化策略组选择 + fake-ip 池", "value": true},
-		{"key": "dns", "desc": "旁路网关 DNS 全套 (国内 nameserver + fake-ip + 完整 fake-ip-filter, 不含被墙的 fallback)", "value": "managed"},
-		{"key": "tun", "desc": "旁路网关 TUN 配置 (enable=true 默认, fnOS 安装时已 setcap 授权; 198.18.x 必由 TUN 接管)", "value": "managed"},
-		{"key": "sniffer", "desc": "TLS/HTTP/QUIC Sniffer (透明代理规则匹配必需)", "value": "enabled"},
+		{"key": "external-controller", "desc": "fnOS 反代用 127.0.0.1:19090；关闭后保留订阅/用户值，可能影响面板连接", "value": state(settings.ExternalController), "enabled": settings.ExternalController},
+		{"key": "profile", "desc": "持久化策略组选择 + fake-ip 池；关闭后保留订阅/用户 profile", "value": state(settings.Profile), "enabled": settings.Profile},
+		{"key": "dns", "desc": "旁路网关 DNS 配置；开启时使用下方可编辑 YAML", "value": state(settings.DNS), "enabled": settings.DNS},
+		{"key": "tun", "desc": "旁路网关 TUN 配置；开启时使用下方可编辑 YAML", "value": state(settings.TUN), "enabled": settings.TUN},
+		{"key": "sniffer", "desc": "TLS/HTTP/QUIC Sniffer；开启时使用下方可编辑 YAML", "value": state(settings.Sniffer), "enabled": settings.Sniffer},
 	}
 }
 
@@ -353,7 +543,9 @@ func (m *Manager) WriteMinimalConfig() error {
 		},
 		"rules": []any{"MATCH,PROXY"},
 	}
-	applyFnOSOverrides(cfg)
+	if err := m.applyFnOSOverrides(cfg); err != nil {
+		return err
+	}
 	return m.writeUnsafe(cfg)
 }
 
@@ -362,4 +554,3 @@ func (m *Manager) Exists() bool {
 	_, err := os.Stat(m.Path)
 	return err == nil
 }
-
