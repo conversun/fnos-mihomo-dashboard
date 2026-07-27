@@ -89,11 +89,7 @@ func (m *Manager) SetOverrideSettings(settings OverrideSettings) error {
 	if err != nil {
 		return err
 	}
-	tmp := m.overridesPath() + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, m.overridesPath())
+	return writeFileAtomic(m.overridesPath(), b)
 }
 
 // ResetOverrideSettings removes custom settings so the built-in defaults are used again.
@@ -348,12 +344,7 @@ func (m *Manager) writeUnsafe(cfg map[string]any) error {
 	if err != nil {
 		return err
 	}
-	// Atomic write
-	tmp := m.Path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, m.Path)
+	return writeFileAtomic(m.Path, b)
 }
 
 // applyFnOSOverrides hardens a user-supplied subscription config for the
@@ -510,11 +501,7 @@ func (m *Manager) Backup() (string, error) {
 		return "", err
 	}
 	bak := m.Path + ".bak"
-	tmp := bak + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp, bak); err != nil {
+	if err := writeFileAtomic(bak, data); err != nil {
 		return "", err
 	}
 	return bak, nil
@@ -529,7 +516,7 @@ func (m *Manager) RestoreFromBackup() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(m.Path, data, 0o644)
+	return writeFileAtomic(m.Path, data)
 }
 
 // HasBackup reports whether a previous backup file exists.

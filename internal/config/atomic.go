@@ -93,3 +93,32 @@ func (m *Manager) RenderSubscription(fullYAML []byte) ([]byte, error) {
 	defer m.mu.Unlock()
 	return m.renderSubscriptionUnsafe(fullYAML)
 }
+
+// TightenExistingPerms fixes up files written by an older build.
+//
+// The atomic writer creates new files at 0600, but a file that already exists
+// keeps whatever mode it was created with — on a live box config.yaml was
+// still 0644, world-readable, holding node passwords and the controller
+// secret. Existing installs would only get fixed on their next write, which
+// may never happen. Called once at startup.
+//
+// Best-effort: a chmod failure must not stop the service from starting.
+func (m *Manager) TightenExistingPerms() {
+	dir := filepath.Dir(m.Path)
+	for _, p := range []string{
+		m.Path,
+		m.Path + ".bak",
+		m.subURLPath(),
+		m.overridesPath(),
+		filepath.Join(dir, ".fnos-admin-token"),
+	} {
+		info, err := os.Lstat(p)
+		// Regular files only: never chase a symlink planted at these paths.
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if info.Mode().Perm() != configPerm {
+			_ = os.Chmod(p, configPerm)
+		}
+	}
+}

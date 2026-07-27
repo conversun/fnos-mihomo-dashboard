@@ -34,6 +34,9 @@ func main() {
 	flag.Parse()
 
 	cfgMgr := config.New(*configFile)
+	// Older builds wrote these world-readable; they hold node passwords and
+	// the controller secret.
+	cfgMgr.TightenExistingPerms()
 	if !cfgMgr.Exists() {
 		if werr := cfgMgr.WriteMinimalConfig(); werr != nil {
 			log.Fatalf("write minimal config: %v", werr)

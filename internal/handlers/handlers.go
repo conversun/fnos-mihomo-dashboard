@@ -38,6 +38,18 @@ func New(configFile, logFile string, mihomoAPI *url.URL, sup *supervisor.Supervi
 	}
 }
 
+// maxJSONBody caps request bodies. The override endpoint accepts free-form
+// YAML strings, so without a limit a single request could stream unbounded
+// data into memory on a root-run service.
+const maxJSONBody = 1 << 20 // 1 MiB
+
+// decodeJSON reads a bounded, strict JSON body.
+func decodeJSON(w http.ResponseWriter, r *http.Request, out any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody))
+	dec.DisallowUnknownFields()
+	return dec.Decode(out)
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -70,7 +82,7 @@ func (h *Handlers) Subscription(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			URL string `json:"url"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := decodeJSON(w, r, &body); err != nil {
 			writeErr(w, 400, err)
 			return
 		}
@@ -285,7 +297,7 @@ func (h *Handlers) Overrides(w http.ResponseWriter, r *http.Request) {
 		})
 	case http.MethodPost:
 		var settings config.OverrideSettings
-		if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+		if err := decodeJSON(w, r, &settings); err != nil {
 			writeErr(w, 400, err)
 			return
 		}

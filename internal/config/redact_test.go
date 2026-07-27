@@ -80,3 +80,60 @@ func TestMaskSubscriptionURL(t *testing.T) {
 		t.Errorf("masked URL still leaks the token: %s", got)
 	}
 }
+
+// Existing installs kept 0644 from an older build, leaving node passwords and
+// the controller secret world-readable. Startup must tighten them; the atomic
+// writer alone only covers files it creates.
+func TestTightenExistingPerms(t *testing.T) {
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "config.yaml")
+
+	files := []string{
+		confPath,
+		confPath + ".bak",
+		filepath.Join(dir, ".fnos-subscription.url"),
+		filepath.Join(dir, ".fnos-overrides.json"),
+		filepath.Join(dir, ".fnos-admin-token"),
+	}
+	for _, f := range files {
+		if err := os.WriteFile(f, []byte("secret"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	New(confPath).TightenExistingPerms()
+
+	for _, f := range files {
+		info, err := os.Stat(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("%s mode = %v, want 0600", filepath.Base(f), perm)
+		}
+	}
+}
+
+// A symlink planted at one of these paths must not be chased: the service runs
+// as root, so following it would chmod an arbitrary file.
+func TestTightenExistingPermsIgnoresSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	confPath := filepath.Join(dir, "config.yaml")
+	if err := os.Symlink(victim, confPath); err != nil {
+		t.Fatal(err)
+	}
+
+	New(confPath).TightenExistingPerms()
+
+	info, err := os.Stat(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o644 {
+		t.Errorf("symlink target was chmodded to %v; must be left alone", perm)
+	}
+}
