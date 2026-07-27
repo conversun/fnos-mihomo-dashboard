@@ -122,4 +122,3 @@ func (c *Client) UpdateProvider(name string) error {
 	}
 	return nil
 }
-

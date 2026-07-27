@@ -256,6 +256,9 @@ window.tailwind.config = {
       <div class="flex flex-col sm:flex-row gap-2">
         <div class="relative flex-1">
           <svg class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none"><use href="#i-link"/></svg>
+          <template x-if="subConfigured">
+            <p class="text-xs text-slate-500 mb-1">当前订阅：<span x-text="subDisplay"></span></p>
+          </template>
           <input type="url" x-model="subUrl"
                  placeholder="https://your-subscription-url/clash"
                  class="w-full rounded-md border border-input bg-background pl-9 pr-3 h-10 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background transition-shadow">
@@ -397,6 +400,8 @@ window.tailwind.config = {
 function app() {
   return {
     subUrl: '',
+    subConfigured: false,
+    subDisplay: '',
     status: {},
     logs: '',
     overrides: [],
@@ -452,7 +457,11 @@ function app() {
           fetch('/api/subscription').then(r => r.json()),
           fetch('/api/overrides').then(r => r.json()).catch(() => ({overrides:[]})),
         ]);
-        if (!this.subUrl) this.subUrl = subRes.url || '';
+        // subRes.url is masked (token stripped) — display only. Never put it
+        // back in the input, or saving would overwrite the real subscription
+        // with the redacted placeholder.
+        this.subConfigured = !!subRes.configured;
+        this.subDisplay = subRes.url || '';
         this.applyOverridePayload(ovRes);
       } catch (e) { console.warn(e); }
     },

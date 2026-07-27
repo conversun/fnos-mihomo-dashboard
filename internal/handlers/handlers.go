@@ -1,11 +1,12 @@
 package handlers
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"sync"
 
 	"github.com/conversun/fnos-mihomo-dashboard/internal/config"
 	"github.com/conversun/fnos-mihomo-dashboard/internal/mihomo"
@@ -14,12 +15,16 @@ import (
 )
 
 type Handlers struct {
-	cfg     *config.Manager
-	logFile string
-	mihomo  *mihomo.Client
+	// applyMu serializes whole subscription transactions (stage -> reload ->
+	// commit). config.Manager's own lock only guards individual file ops.
+	applyMu sync.Mutex
+
+	cfg      *config.Manager
+	logFile  string
+	mihomo   *mihomo.Client
 	confPath string
-	subInfo *subscription.Cache
-	sup     *supervisor.Supervisor
+	subInfo  *subscription.Cache
+	sup      *supervisor.Supervisor
 }
 
 func New(configFile, logFile string, mihomoAPI *url.URL, sup *supervisor.Supervisor) *Handlers {
@@ -53,10 +58,18 @@ func (h *Handlers) Subscription(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, err)
 			return
 		}
-		writeJSON(w, 200, map[string]string{"url": u})
+		// The subscription URL embeds the airline token — usually the most
+		// reusable credential in the system. Report only whether one is set
+		// and which host it points at.
+		writeJSON(w, 200, map[string]any{
+			"configured": u != "",
+			"url":        config.MaskSubscriptionURL(u),
+		})
 
 	case http.MethodPost:
-		var body struct{ URL string `json:"url"` }
+		var body struct {
+			URL string `json:"url"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeErr(w, 400, err)
 			return
@@ -65,11 +78,9 @@ func (h *Handlers) Subscription(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, errEmptyURL)
 			return
 		}
-		if err := subscription.Validate(body.URL); err != nil {
-			writeErr(w, 400, err)
-			return
-		}
-		// Pull full subscription yaml. We preserve the user's proxies /
+		// One request only: FetchFullYAML already validates status, yaml shape
+		// and the proxies list. A separate pre-flight Validate() meant two GETs
+		// with a TOCTOU window between them. We preserve the user's proxies /
 		// proxy-groups / rules / rule-providers and only override fnOS-managed
 		// fields (external-controller, profile, dns, tun, sniffer).
 		fullYAML, info, err := subscription.FetchFullYAML(body.URL)
@@ -77,20 +88,8 @@ func (h *Handlers) Subscription(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, fmt.Errorf("fetch subscription: %w", err))
 			return
 		}
-		bakPath, _ := h.cfg.Backup()
-		if err := h.cfg.SetSubscriptionFromURL(body.URL, fullYAML); err != nil {
-			writeErr(w, 500, err)
-			return
-		}
-		if err := h.mihomo.ReloadConfigPath(h.confPath); err != nil {
-			rbErr := h.cfg.RestoreFromBackup()
-			_ = h.mihomo.ReloadConfigPath(h.confPath)
-			writeJSON(w, 502, map[string]any{
-				"error":          "mihomo reload failed; config rolled back",
-				"detail":         err.Error(),
-				"rollback_error": rollbackErr(rbErr),
-				"backup":         bakPath,
-			})
+		if err := h.applySubscription(body.URL, fullYAML); err != nil {
+			writeApplyError(w, err)
 			return
 		}
 		if info != nil {
@@ -103,18 +102,62 @@ func (h *Handlers) Subscription(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET /api/status → {version: ..., currentProxy: ...}
+// GET /api/status → health state + version
+//
+// Health is a state, not a boolean. A live child process proves nothing about
+// whether the API we drive belongs to it: a mihomo that lost the race for the
+// controller port stays alive while another process answers on that port, and
+// the old code reported that as healthy (see supervisor.OwnsListener).
 func (h *Handlers) Status(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	out := map[string]any{}
+
+	processAlive := false
+	pid := 0
 	if h.sup != nil {
-		out["mihomo_running"] = h.sup.Running()
-		out["mihomo_pid"] = h.sup.PID()
+		processAlive = h.sup.Running()
+		pid = h.sup.PID()
 	}
-	if v, err := h.mihomo.Version(); err == nil {
-		out["version"] = v
+
+	version, verr := h.mihomo.Version()
+	apiReachable := verr == nil
+	if apiReachable {
+		out["version"] = version
 	} else {
-		out["version_error"] = err.Error()
+		out["version_error"] = verr.Error()
 	}
+
+	apiOwned := false
+	if processAlive && apiReachable && h.mihomo.BaseURL != nil {
+		if owned, err := supervisor.OwnsListener(pid, h.mihomo.BaseURL.Host); err == nil {
+			apiOwned = owned
+		}
+	}
+
+	state := "stopped"
+	switch {
+	case processAlive && apiReachable && apiOwned:
+		state = "healthy"
+	case processAlive && apiReachable && !apiOwned:
+		// Someone else answers on the controller port. Driving it would
+		// reconfigure a process we do not supervise.
+		state = "foreign_api"
+	case processAlive && !apiReachable:
+		state = "api_unreachable"
+	}
+
+	out["mihomo_state"] = state
+	out["process_alive"] = processAlive
+	out["api_reachable"] = apiReachable
+	out["api_owned"] = apiOwned
+	out["mihomo_pid"] = pid
+	// Kept for UI compatibility, but now means "actually usable", not merely
+	// "a process exists".
+	out["mihomo_running"] = state == "healthy"
+
 	writeJSON(w, 200, out)
 }
 
@@ -164,7 +207,7 @@ func (h *Handlers) SubscriptionInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if info == nil {
-		writeJSON(w, 200, map[string]any{"present": true, "info": nil, "url": url})
+		writeJSON(w, 200, map[string]any{"present": true, "info": nil, "url": config.MaskSubscriptionURL(url)})
 		return
 	}
 	writeJSON(w, 200, map[string]any{"present": true, "info": info})
@@ -192,12 +235,14 @@ func (h *Handlers) SubscriptionRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, err)
 		return
 	}
-	if err := h.cfg.SetSubscriptionFromURL(url, fullYAML); err != nil {
-		writeErr(w, 500, err)
+	// Same transaction as a manual save. Previously this discarded the reload
+	// error and always returned ok:true, so a scheduled refresh could write a
+	// config mihomo never loaded and report success — silently breaking the
+	// user's gateway with no signal anywhere.
+	if err := h.applySubscription(url, fullYAML); err != nil {
+		writeApplyError(w, err)
 		return
 	}
-	// Trigger a full mihomo reload from disk so all changed fields take effect
-	_ = h.mihomo.ReloadConfigPath(h.confPath)
 	if info != nil {
 		h.subInfo.Put(url, info)
 	}
@@ -206,7 +251,14 @@ func (h *Handlers) SubscriptionRefresh(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/config — return raw config.yaml content (post-override)
 func (h *Handlers) Config(w http.ResponseWriter, r *http.Request) {
-	b, err := os.ReadFile(h.confPath)
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	// Credential values are masked. A subscription populates this file with
+	// per-node passwords/UUIDs, so serving it verbatim handed every reader the
+	// user's paid airline account.
+	b, err := h.cfg.RedactedYAML()
 	if err != nil {
 		writeErr(w, 500, err)
 		return
@@ -266,25 +318,52 @@ func (h *Handlers) Overrides(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/mihomo/start — start the supervised mihomo process
 func (h *Handlers) MihomoStart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost { w.WriteHeader(http.StatusMethodNotAllowed); return }
-	if h.sup == nil { writeErr(w, 503, fmt.Errorf("supervisor not configured")); return }
-	if err := h.sup.Start(); err != nil { writeErr(w, 409, err); return }
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if h.sup == nil {
+		writeErr(w, 503, fmt.Errorf("supervisor not configured"))
+		return
+	}
+	if err := h.sup.Start(); err != nil {
+		writeErr(w, 409, err)
+		return
+	}
 	writeJSON(w, 200, map[string]any{"ok": true, "pid": h.sup.PID()})
 }
 
 // POST /api/mihomo/stop — stop the supervised mihomo process
 func (h *Handlers) MihomoStop(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost { w.WriteHeader(http.StatusMethodNotAllowed); return }
-	if h.sup == nil { writeErr(w, 503, fmt.Errorf("supervisor not configured")); return }
-	if err := h.sup.Stop(); err != nil { writeErr(w, 409, err); return }
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if h.sup == nil {
+		writeErr(w, 503, fmt.Errorf("supervisor not configured"))
+		return
+	}
+	if err := h.sup.Stop(); err != nil {
+		writeErr(w, 409, err)
+		return
+	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
 // POST /api/mihomo/restart — stop then start
 func (h *Handlers) MihomoRestart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost { w.WriteHeader(http.StatusMethodNotAllowed); return }
-	if h.sup == nil { writeErr(w, 503, fmt.Errorf("supervisor not configured")); return }
-	if err := h.sup.Restart(); err != nil { writeErr(w, 500, err); return }
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if h.sup == nil {
+		writeErr(w, 503, fmt.Errorf("supervisor not configured"))
+		return
+	}
+	if err := h.sup.Restart(); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
 	writeJSON(w, 200, map[string]any{"ok": true, "pid": h.sup.PID()})
 }
 

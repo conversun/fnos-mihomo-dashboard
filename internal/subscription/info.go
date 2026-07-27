@@ -1,10 +1,11 @@
 package subscription
 
 import (
-	"gopkg.in/yaml.v3"
-	"fmt"
-	"io"
 	"errors"
+	"fmt"
+	"gopkg.in/yaml.v3"
+	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,7 +23,42 @@ type Info struct {
 	Total     int64 `json:"total"`
 	Expire    int64 `json:"expire"`     // unix seconds; 0 if absent
 	UpdatedAt int64 `json:"updated_at"` // unix seconds when this Info was fetched
-	URL       string `json:"url"`
+	// URL is intentionally NOT serialized: it carries the subscription token.
+	URL string `json:"-"`
+}
+
+// parseUserInfoHeader parses the airline-style `subscription-userinfo` header:
+//
+//	upload=44137197; download=24471430; total=10737418240; expire=1671235200
+//
+// Returns nil when the header is absent, so callers can treat metadata as
+// best-effort.
+func parseUserInfoHeader(header, rawURL string) *Info {
+	if header == "" {
+		return nil
+	}
+	info := &Info{UpdatedAt: time.Now().Unix(), URL: rawURL}
+	for _, kv := range strings.Split(header, ";") {
+		parts := strings.SplitN(strings.TrimSpace(kv), "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		val, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		if err != nil {
+			continue
+		}
+		switch strings.TrimSpace(parts[0]) {
+		case "upload":
+			info.Upload = val
+		case "download":
+			info.Download = val
+		case "total":
+			info.Total = val
+		case "expire":
+			info.Expire = val
+		}
+	}
+	return info
 }
 
 var ErrNoUserInfo = errors.New("subscription URL did not return subscription-userinfo header")
@@ -51,148 +87,27 @@ func (c *Cache) Put(url string, info *Info) {
 
 // Fetch performs a GET with a Clash-style User-Agent (most airlines key on it)
 // and parses the subscription-userinfo header without downloading the full body.
-func Fetch(url string) (*Info, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func Fetch(rawURL string) (*Info, error) {
+	u, err := validateURL(rawURL)
 	if err != nil {
 		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, ErrFetchFailed
 	}
 	req.Header.Set("User-Agent", "clash.meta")
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := newClient(30 * time.Second).Do(req)
 	if err != nil {
-		return nil, err
+		log.Printf("subscription: fetch %s failed: %v", u.Host, err)
+		return nil, ErrFetchFailed
 	}
 	defer resp.Body.Close()
-	header := resp.Header.Get("subscription-userinfo")
-	if header == "" {
+	info := parseUserInfoHeader(resp.Header.Get("subscription-userinfo"), rawURL)
+	if info == nil {
 		return nil, ErrNoUserInfo
 	}
-	info := &Info{UpdatedAt: time.Now().Unix(), URL: url}
-	for _, kv := range strings.Split(header, ";") {
-		kv = strings.TrimSpace(kv)
-		parts := strings.SplitN(kv, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		val, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
-		if err != nil {
-			continue
-		}
-		switch strings.TrimSpace(parts[0]) {
-		case "upload":
-			info.Upload = val
-		case "download":
-			info.Download = val
-		case "total":
-			info.Total = val
-		case "expire":
-			info.Expire = val
-		}
-	}
 	return info, nil
-}
-
-// Validate quickly checks if a URL is reachable and returns something that
-// at least *looks* like a Clash yaml subscription. Returns nil on success.
-//
-// We can't fully validate without consuming the entire body (which can be
-// large) but we cheaply reject:
-//   - non-2xx HTTP responses
-//   - HTML pages (e.g. landing pages, 404 fallbacks like example.com/*)
-//   - empty bodies
-func Validate(url string) error {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "clash.meta")
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return errors.New("subscription URL returned HTTP " + strconv.Itoa(resp.StatusCode))
-	}
-	buf := make([]byte, 512)
-	n, _ := resp.Body.Read(buf)
-	if n == 0 {
-		return errors.New("subscription URL returned an empty body")
-	}
-	head := strings.ToLower(strings.TrimSpace(string(buf[:n])))
-	if strings.HasPrefix(head, "<!doctype html") || strings.HasPrefix(head, "<html") {
-		return errors.New("subscription URL returned an HTML page (not a Clash yaml). Verify the URL is correct")
-	}
-	if !strings.ContainsAny(head, ":-") {
-		return errors.New("subscription URL response does not look like a yaml config")
-	}
-	return nil
-}
-
-// FetchProxies downloads the subscription URL, parses it as yaml, extracts
-// the `proxies` list, and returns it along with any subscription-userinfo.
-//
-// This accepts both shapes a subscription endpoint may return:
-//   - bare proxy-provider yaml: `proxies: [...]`
-//   - full Clash config yaml:   `proxies: [...]; proxy-groups: [...]; rules: [...]; ...`
-//
-// We always extract just `proxies`, which is what mihomo's proxy-providers
-// `type: file` expects. This is the key insight that lets users paste their
-// airline's standard "Clash subscription URL" without manual editing.
-func FetchProxies(rawURL string) (proxies []any, info *Info, err error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	req.Header.Set("User-Agent", "clash.meta")
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return nil, nil, fmt.Errorf("subscription URL returned HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20)) // 16 MB safety cap
-	if err != nil {
-		return nil, nil, err
-	}
-	var data map[string]any
-	if err := yaml.Unmarshal(body, &data); err != nil {
-		return nil, nil, fmt.Errorf("parse subscription yaml: %w", err)
-	}
-	rawProxies, _ := data["proxies"].([]any)
-	if len(rawProxies) == 0 {
-		return nil, nil, errors.New("subscription yaml has no `proxies` field (empty / not a Clash subscription?)")
-	}
-	// subscription-userinfo header (best-effort)
-	if header := resp.Header.Get("subscription-userinfo"); header != "" {
-		info = &Info{UpdatedAt: time.Now().Unix(), URL: rawURL}
-		for _, kv := range strings.Split(header, ";") {
-			kv = strings.TrimSpace(kv)
-			parts := strings.SplitN(kv, "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			val, perr := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
-			if perr != nil {
-				continue
-			}
-			switch strings.TrimSpace(parts[0]) {
-			case "upload":
-				info.Upload = val
-			case "download":
-				info.Download = val
-			case "total":
-				info.Total = val
-			case "expire":
-				info.Expire = val
-			}
-		}
-	}
-	return rawProxies, info, nil
 }
 
 // FetchFullYAML downloads the subscription URL and returns the full raw yaml
@@ -200,23 +115,36 @@ func FetchProxies(rawURL string) (proxies []any, info *Info, err error) {
 // subscription-userinfo. Validates that the body parses as yaml and contains
 // a non-empty proxies list — refuses to save junk.
 func FetchFullYAML(rawURL string) (body []byte, info *Info, err error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	u, err := validateURL(rawURL)
 	if err != nil {
 		return nil, nil, err
 	}
-	req.Header.Set("User-Agent", "clash.meta")
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, ErrFetchFailed
+	}
+	req.Header.Set("User-Agent", "clash.meta")
+	resp, err := newClient(60 * time.Second).Do(req)
+	if err != nil {
+		log.Printf("subscription: fetch %s failed: %v", u.Host, err)
+		return nil, nil, ErrFetchFailed
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return nil, nil, fmt.Errorf("subscription URL returned HTTP %d", resp.StatusCode)
+		// Deliberately does NOT echo the status: distinct codes let a caller
+		// probe internal ports.
+		log.Printf("subscription: fetch %s returned HTTP %d", u.Host, resp.StatusCode)
+		return nil, nil, ErrFetchFailed
 	}
-	body, err = io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	// Read one extra byte so an oversized body is rejected rather than
+	// silently truncated into invalid yaml.
+	const maxBody = 16 << 20
+	body, err = io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, ErrFetchFailed
+	}
+	if len(body) > maxBody {
+		return nil, nil, fmt.Errorf("%w: subscription is larger than 16 MiB", ErrFetchFailed)
 	}
 	var probe map[string]any
 	if err := yaml.Unmarshal(body, &probe); err != nil {
@@ -225,30 +153,5 @@ func FetchFullYAML(rawURL string) (body []byte, info *Info, err error) {
 	if proxies, _ := probe["proxies"].([]any); len(proxies) == 0 {
 		return nil, nil, errors.New("subscription yaml has no `proxies` field (empty / not a Clash subscription?)")
 	}
-	if header := resp.Header.Get("subscription-userinfo"); header != "" {
-		info = &Info{UpdatedAt: time.Now().Unix(), URL: rawURL}
-		for _, kv := range strings.Split(header, ";") {
-			kv = strings.TrimSpace(kv)
-			parts := strings.SplitN(kv, "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			val, perr := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
-			if perr != nil {
-				continue
-			}
-			switch strings.TrimSpace(parts[0]) {
-			case "upload":
-				info.Upload = val
-			case "download":
-				info.Download = val
-			case "total":
-				info.Total = val
-			case "expire":
-				info.Expire = val
-			}
-		}
-	}
-	return body, info, nil
+	return body, parseUserInfoHeader(resp.Header.Get("subscription-userinfo"), rawURL), nil
 }
-

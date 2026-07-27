@@ -12,10 +12,11 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/breml/rootcerts" // embed Mozilla CA bundle so HTTPS works even without system ca-certificates
+	"github.com/conversun/fnos-mihomo-dashboard/internal/auth"
 	"github.com/conversun/fnos-mihomo-dashboard/internal/config"
 	"github.com/conversun/fnos-mihomo-dashboard/internal/handlers"
 	"github.com/conversun/fnos-mihomo-dashboard/internal/supervisor"
-	_ "github.com/breml/rootcerts" // embed Mozilla CA bundle so HTTPS works even without system ca-certificates
 )
 
 //go:embed web/dist
@@ -43,7 +44,9 @@ func main() {
 	var sup *supervisor.Supervisor
 	if *mihomoBin != "" {
 		confDir := *mihomoConfigDir
-		if confDir == "" { confDir = filepath.Dir(*configFile) }
+		if confDir == "" {
+			confDir = filepath.Dir(*configFile)
+		}
 		sup = supervisor.New(*mihomoBin, confDir, *logFile)
 		if err := sup.Start(); err != nil {
 			log.Printf("warn: initial mihomo start failed: %v", err)
@@ -57,38 +60,54 @@ func main() {
 		log.Fatalf("invalid mihomo-api: %v", err)
 	}
 
+	// Management auth. mihomo's controller is bound to 127.0.0.1 so it is not
+	// network-reachable; our /mihomo/* proxy undoes that, so the whole surface
+	// must be authenticated. Loopback stays open so the local UI, the CLI and
+	// the auto-refresh ticker keep working without configuration.
+	confDirForToken := *mihomoConfigDir
+	if confDirForToken == "" {
+		confDirForToken = filepath.Dir(*configFile)
+	}
+	adminToken, err := auth.LoadOrCreateToken(confDirForToken)
+	if err != nil {
+		log.Fatalf("admin token: %v", err)
+	}
+	guard := auth.New(adminToken, true)
+
 	mux := http.NewServeMux()
 
 	// Our API
 	h := handlers.New(*configFile, *logFile, mihomoURL, sup)
-	mux.HandleFunc("/api/subscription", h.Subscription)
-	mux.HandleFunc("/api/status", h.Status)
-	mux.HandleFunc("/api/logs", h.Logs)
-	mux.HandleFunc("/api/reload", h.Reload)
-	mux.HandleFunc("/api/overrides", h.Overrides)
-	mux.HandleFunc("/api/config", h.Config)
-	mux.HandleFunc("/api/subscription/info", h.SubscriptionInfo)
-	mux.HandleFunc("/api/subscription/refresh", h.SubscriptionRefresh)
-	mux.HandleFunc("/api/mihomo/start", h.MihomoStart)
-	mux.HandleFunc("/api/mihomo/stop", h.MihomoStop)
-	mux.HandleFunc("/api/mihomo/restart", h.MihomoRestart)
+	mux.Handle("/api/subscription", guard.ProtectFunc(h.Subscription))
+	mux.Handle("/api/status", guard.ProtectFunc(h.Status))
+	mux.Handle("/api/logs", guard.ProtectFunc(h.Logs))
+	mux.Handle("/api/reload", guard.ProtectFunc(h.Reload))
+	mux.Handle("/api/overrides", guard.ProtectFunc(h.Overrides))
+	mux.Handle("/api/config", guard.ProtectFunc(h.Config))
+	mux.Handle("/api/subscription/info", guard.ProtectFunc(h.SubscriptionInfo))
+	mux.Handle("/api/subscription/refresh", guard.ProtectFunc(h.SubscriptionRefresh))
+	mux.Handle("/api/mihomo/start", guard.ProtectFunc(h.MihomoStart))
+	mux.Handle("/api/mihomo/stop", guard.ProtectFunc(h.MihomoStop))
+	mux.Handle("/api/mihomo/restart", guard.ProtectFunc(h.MihomoRestart))
 
 	// Reverse proxy to mihomo RESTful API (for clients that need raw mihomo API)
 	mihomoProxy := httputil.NewSingleHostReverseProxy(mihomoURL)
-	mux.Handle("/mihomo/", http.StripPrefix("/mihomo", mihomoProxy))
+	// THE critical one: this forwards every method/path to mihomo's controller,
+	// which the generated config leaves with an empty secret.
+	mux.Handle("/mihomo/", guard.Protect(http.StripPrefix("/mihomo", mihomoProxy)))
 
 	// Serve metacubexd's config.js dynamically so it auto-connects through our reverse proxy.
 	// Browser side: defaultBackendURL = '<origin>/mihomo' → dashboard /mihomo/* → mihomo 127.0.0.1
-	mux.HandleFunc("/clash/config.js", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/clash/config.js", guard.ProtectFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte("window.__METACUBEXD_CONFIG__ = { defaultBackendURL: window.location.origin + '/mihomo' };\n"))
-	})
+	}))
 
 	// Serve metacubexd at /clash/ if provided (escape hatch for advanced users)
 	if *metacubexdDir != "" {
 		fileSrv := http.FileServer(http.Dir(*metacubexdDir))
-		mux.Handle("/clash/", http.StripPrefix("/clash/", fileSrv))
+		mux.Handle("/clash/", guard.Protect(http.StripPrefix("/clash/", fileSrv)))
 	}
 
 	// Serve our embedded UI at /
@@ -106,6 +125,7 @@ func main() {
 	})
 
 	log.Printf("fnos-mihomo-dashboard listening on %s", *listen)
+	log.Printf("  admin token: %s (loopback exempt)", filepath.Join(confDirForToken, auth.TokenFileName))
 	log.Printf("  mihomo-api : %s", *mihomoAPI)
 	log.Printf("  config     : %s", *configFile)
 	log.Printf("  log        : %s", *logFile)
@@ -132,9 +152,15 @@ func main() {
 		}()
 	}
 
+	// Timeouts: the service is root-run and unauthenticated callers can still
+	// open sockets, so a slowloris must not be able to exhaust it.
 	srv := &http.Server{
-		Addr:    *listen,
-		Handler: mux,
+		Addr:              *listen,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       2 * time.Minute,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       3 * time.Minute,
 	}
 	log.Fatal(srv.ListenAndServe())
 }

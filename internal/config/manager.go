@@ -286,7 +286,13 @@ func (m *Manager) subURLPath() string {
 }
 
 // GetSubscription returns the current fnos-subscription URL (or empty string).
+//
+// Takes the same lock as the writers: the sidecar is rewritten via atomic
+// rename, but holding the lock also keeps this consistent with a multi-step
+// transaction that is midway through staging config + URL.
 func (m *Manager) GetSubscription() (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	b, err := os.ReadFile(m.subURLPath())
 	if os.IsNotExist(err) {
 		return "", nil
@@ -298,31 +304,43 @@ func (m *Manager) GetSubscription() (string, error) {
 }
 
 // SetSubscriptionFromURL persists the URL and writes the entire subscription
-// yaml as the mihomo config, then applies enabled fnOS overrides. User proxies /
-// proxy-groups / rules / rule-providers / etc. from the subscription are preserved as-is.
+// yaml as the mihomo config, then applies enabled fnOS overrides.
+//
+// Deprecated: this couples the config write and the URL commit, so a failed
+// mihomo reload leaves them inconsistent. Prefer RenderSubscription +
+// WriteRawAtomic + (after a successful reload) WriteSubscriptionURLAtomic.
 func (m *Manager) SetSubscriptionFromURL(url string, fullYAML []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	out, err := m.renderSubscriptionUnsafe(fullYAML)
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomic(m.subURLPath(), []byte(url)); err != nil {
+		return err
+	}
+	return writeFileAtomic(m.Path, out)
+}
+
+// renderSubscriptionUnsafe turns a fetched subscription yaml into the config
+// bytes we would write, applying enabled fnOS overrides. Caller holds m.mu.
+// User proxies / proxy-groups / rules / rule-providers are preserved as-is.
+func (m *Manager) renderSubscriptionUnsafe(fullYAML []byte) ([]byte, error) {
 	var cfg map[string]any
 	if err := yaml.Unmarshal(fullYAML, &cfg); err != nil {
-		return fmt.Errorf("parse subscription yaml: %w", err)
+		return nil, fmt.Errorf("parse subscription yaml: %w", err)
 	}
 	if cfg == nil {
 		cfg = map[string]any{}
 	}
 	if proxies, _ := cfg["proxies"].([]any); len(proxies) == 0 {
-		return fmt.Errorf("subscription yaml has no proxies (empty / not a Clash subscription)")
+		return nil, fmt.Errorf("subscription yaml has no proxies (empty / not a Clash subscription)")
 	}
-
 	if err := m.applyFnOSOverrides(cfg); err != nil {
-		return err
+		return nil, err
 	}
-
-	if err := os.WriteFile(m.subURLPath(), []byte(url), 0o644); err != nil {
-		return err
-	}
-	return m.writeUnsafe(cfg)
+	return yaml.Marshal(cfg)
 }
 
 func (m *Manager) writeUnsafe(cfg map[string]any) error {
