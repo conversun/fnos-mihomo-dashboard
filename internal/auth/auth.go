@@ -81,6 +81,12 @@ func (g *Guard) authorized(r *http.Request) bool {
 	return constantTimeEqual(presentedToken(r), g.token)
 }
 
+// Authorized is the exported form of authorized, so the UI token-gate can
+// reuse the exact same check the API guard applies.
+func (g *Guard) Authorized(r *http.Request) bool {
+    return g.authorized(r)
+}
+
 // presentedToken accepts the token from an Authorization header, an X-Token
 // header, or a query parameter. The query form exists because MetaCubeXD's
 // static assets are loaded by the browser without custom headers.
