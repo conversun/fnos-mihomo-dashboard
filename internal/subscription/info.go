@@ -100,7 +100,7 @@ func Fetch(rawURL string) (*Info, error) {
 	resp, err := newClient(30 * time.Second).Do(req)
 	if err != nil {
 		log.Printf("subscription: fetch %s failed: %v", u.Host, err)
-		return nil, ErrFetchFailed
+		return nil, fetchError(err)
 	}
 	defer resp.Body.Close()
 	info := parseUserInfoHeader(resp.Header.Get("subscription-userinfo"), rawURL)
@@ -127,7 +127,7 @@ func FetchFullYAML(rawURL string) (body []byte, info *Info, err error) {
 	resp, err := newClient(60 * time.Second).Do(req)
 	if err != nil {
 		log.Printf("subscription: fetch %s failed: %v", u.Host, err)
-		return nil, nil, ErrFetchFailed
+		return nil, nil, fetchError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {

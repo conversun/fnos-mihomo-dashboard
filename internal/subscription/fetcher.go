@@ -13,7 +13,14 @@ import (
 
 // ErrBlockedTarget is returned when a subscription URL resolves to an address
 // the fetcher refuses to contact.
-var ErrBlockedTarget = errors.New("subscription URL points at a private or local address")
+//
+// This is deliberately NOT folded into ErrFetchFailed. Telling a user their LAN
+// URL is "unreachable" is false and sends them debugging their own web server;
+// self-hosting the Clash config on the NAS is a natural thing to try. Naming the
+// category leaks nothing they did not already supply -- the caller chose the
+// address, and the resolved IP is never echoed back (see fetchError).
+var ErrBlockedTarget = errors.New("subscription URL resolves to a private or local " +
+	"address, which the dashboard refuses to fetch; use a publicly reachable URL")
 
 // ErrFetchFailed is the single, uniform error surfaced to callers for any
 // network-level failure.
@@ -25,6 +32,21 @@ var ErrBlockedTarget = errors.New("subscription URL points at a private or local
 // NAS's internal network. Everything now collapses to one message; details go
 // to the server log only.
 var ErrFetchFailed = errors.New("subscription fetch failed: check the URL is a reachable Clash subscription")
+
+// fetchError maps a transport failure onto the error the caller may see.
+//
+// Two rules, both load-bearing:
+//   - A blocked target returns the BARE sentinel. safeTransport wraps it with the
+//     concrete IP for the server log; returning that wrapped value would confirm
+//     internal DNS mappings to whoever supplied the URL.
+//   - Everything else collapses to ErrFetchFailed, so an open port and a closed
+//     one remain indistinguishable.
+func fetchError(err error) error {
+	if errors.Is(err, ErrBlockedTarget) {
+		return ErrBlockedTarget
+	}
+	return ErrFetchFailed
+}
 
 // safeTransport blocks private/loopback destinations at DIAL time.
 //

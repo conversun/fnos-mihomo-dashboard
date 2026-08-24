@@ -59,8 +59,11 @@ func TestValidateURLRejectsUnsafeShapes(t *testing.T) {
 	}
 }
 
-// A private target must fail, and must fail with the SAME message as any other
-// fetch failure — distinct errors let a caller tell open ports from closed ones.
+// A private target must fail, and two private targets must fail IDENTICALLY --
+// distinct errors let a caller tell open ports from closed ones. The category is
+// now named (ErrBlockedTarget) so the user learns their LAN URL was refused by
+// policy rather than being told it was unreachable, but within that category
+// nothing may distinguish an open port from a closed one.
 func TestFetchDoesNotLeakPortState(t *testing.T) {
 	// An open local port and a closed one.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -77,14 +80,46 @@ func TestFetchDoesNotLeakPortState(t *testing.T) {
 	if errOpen == nil || errClosed == nil {
 		t.Fatal("both loopback targets must be refused")
 	}
-	if !errors.Is(errOpen, ErrFetchFailed) || !errors.Is(errClosed, ErrFetchFailed) {
-		t.Errorf("errors must be the uniform ErrFetchFailed; got %v / %v", errOpen, errClosed)
+	if !errors.Is(errOpen, ErrBlockedTarget) || !errors.Is(errClosed, ErrBlockedTarget) {
+		t.Errorf("a private target must report ErrBlockedTarget; got %v / %v", errOpen, errClosed)
 	}
 	if errOpen.Error() != errClosed.Error() {
 		t.Errorf("error text distinguishes open from closed ports:\n open  : %v\n closed: %v", errOpen, errClosed)
 	}
 	if strings.Contains(errOpen.Error(), "refused") || strings.Contains(errClosed.Error(), "refused") {
 		t.Error("error text leaks the connection outcome")
+	}
+	// The resolved address must never be echoed back: safeTransport wraps the
+	// sentinel with the concrete IP for the server log, and returning that
+	// wrapped error would confirm internal DNS mappings to the caller.
+	for _, e := range []error{errOpen, errClosed} {
+		if strings.Contains(e.Error(), "127.0.0.1") {
+			t.Errorf("error text echoes the resolved address: %v", e)
+		}
+	}
+}
+
+// The whole point of naming the blocked category: a user who self-hosts their
+// Clash config on the NAS or LAN was previously told the URL was unreachable,
+// which is false and sends them debugging the wrong thing.
+func TestBlockedTargetIsDistinguishableFromAGenericFailure(t *testing.T) {
+	_, _, err := FetchFullYAML("http://192.168.1.1/sub.yaml")
+	if err == nil {
+		t.Fatal("a private target must be refused")
+	}
+	if errors.Is(err, ErrFetchFailed) {
+		t.Errorf("blocked-by-policy must not masquerade as a generic fetch failure: %v", err)
+	}
+	if !errors.Is(err, ErrBlockedTarget) {
+		t.Fatalf("want ErrBlockedTarget, got %v", err)
+	}
+	if err.Error() == ErrFetchFailed.Error() {
+		t.Error("blocked target reuses the generic message, so the user cannot tell why it failed")
+	}
+	// It must actually say something the user can act on.
+	low := strings.ToLower(err.Error())
+	if !strings.Contains(low, "private") && !strings.Contains(low, "local") {
+		t.Errorf("message does not explain the cause: %q", err.Error())
 	}
 }
 
