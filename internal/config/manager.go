@@ -30,6 +30,7 @@ type OverrideSettings struct {
 	DNS                bool   `json:"dns"`
 	TUN                bool   `json:"tun"`
 	Sniffer            bool   `json:"sniffer"`
+	AllowLAN           bool   `json:"allow_lan"`
 	ProfileYAML        string `json:"profile_yaml"`
 	DNSYAML            string `json:"dns_yaml"`
 	TUNYAML            string `json:"tun_yaml"`
@@ -43,6 +44,7 @@ func DefaultOverrideSettings() OverrideSettings {
 		DNS:                true,
 		TUN:                true,
 		Sniffer:            true,
+		AllowLAN:           true,
 		ProfileYAML:        mustYAML(defaultProfileConfig()),
 		DNSYAML:            mustYAML(defaultDNSConfig()),
 		TUNYAML:            mustYAML(defaultTUNConfig()),
@@ -394,6 +396,16 @@ func applyFnOSOverrides(cfg map[string]any, settings OverrideSettings) error {
 		}
 		cfg["sniffer"] = sniffer
 	}
+
+	// The fnOS package ships LAN access on, but a subscription save replaces the
+	// whole config map, so it has to be re-applied here or every refresh silently
+	// strands LAN clients (#272). allow-lan alone only binds loopback, so the two
+	// keys move together — the same pair WriteMinimalConfig seeds.
+	if settings.AllowLAN {
+		cfg["allow-lan"] = true
+		cfg["bind-address"] = "*"
+	}
+
 	return nil
 }
 
@@ -489,6 +501,7 @@ func (m *Manager) AppliedOverrides() []map[string]any {
 		{"key": "dns", "desc": "旁路网关 DNS 配置；开启时使用下方可编辑 YAML", "value": state(settings.DNS), "enabled": settings.DNS},
 		{"key": "tun", "desc": "旁路网关 TUN 配置；开启时使用下方可编辑 YAML", "value": state(settings.TUN), "enabled": settings.TUN},
 		{"key": "sniffer", "desc": "TLS/HTTP/QUIC Sniffer；开启时使用下方可编辑 YAML", "value": state(settings.Sniffer), "enabled": settings.Sniffer},
+		{"key": "allow-lan", "desc": "允许局域网设备使用代理（allow-lan + bind-address）；关闭后保留订阅/用户值", "value": state(settings.AllowLAN), "enabled": settings.AllowLAN},
 	}
 }
 
